@@ -1204,30 +1204,38 @@ def print_curation_signal(signal_data: Optional[Dict]):
     signal_amount = format_tokens(signal_data.get('signalAmount', '0'))
     print(f"{Colors.BOLD}Total signal:{Colors.RESET} {Colors.BRIGHT_CYAN}{signal_amount}{Colors.RESET}")
     
-    # Display if it's a new deployment
-    if signal_data.get('isNewDeployment'):
-        deployment_created_at = signal_data.get('deploymentCreatedAt')
-        if deployment_created_at:
-            created_date = format_timestamp(str(deployment_created_at))[:16]
-            print(f"{Colors.BRIGHT_YELLOW}⚠️  New deployment{Colors.RESET} (created {Colors.DIM}{created_date}{Colors.RESET})")
-    
     signals = signal_data.get('signals', [])
     if signals:
         print(f"{Colors.DIM}Signals: {len(signals)}{Colors.RESET}")
     print()
 
 
-def print_signal_changes(changes: List[Dict], hours: int = 48):
+def print_signal_changes(changes: List[Dict], hours: int = 48, new_deployment_info: Optional[Dict] = None):
     """Display signal changes in a compact format with colors"""
     print_section(f"Signal Changes ({hours}h)")
-    if not changes:
+    
+    # Add new deployment event if applicable
+    display_changes = list(changes)
+    if new_deployment_info and new_deployment_info.get('isNewDeployment'):
+        created_at = new_deployment_info.get('deploymentCreatedAt')
+        signal_amount = new_deployment_info.get('signalAmount', '0')
+        if created_at:
+            display_changes.append({
+                'type': 'new_deployment',
+                'timestamp': created_at,
+                'tokens': signal_amount
+            })
+            # Sort by timestamp descending
+            display_changes.sort(key=lambda x: int(x.get('timestamp', '0')), reverse=True)
+    
+    if not display_changes:
         print(f"{Colors.DIM}No changes found.{Colors.RESET}\n")
         return
     
     total_added = 0
     total_removed = 0
     
-    for change in changes:
+    for change in display_changes:
         change_type = change.get('type', 'unknown')
         tokens = change.get('tokens', '0')
         amount = float(tokens) / 1e18
@@ -1235,7 +1243,15 @@ def print_signal_changes(changes: List[Dict], hours: int = 48):
         signaller_short = signaller[:10] + "..." if len(signaller) > 10 else signaller
         timestamp = format_timestamp(str(change.get('timestamp', '0')))[:16]
         
-        if change_type == 'upgrade':
+        if change_type == 'new_deployment':
+            # New deployment indicator
+            symbol = f"{Colors.BRIGHT_YELLOW}★{Colors.RESET}"
+            token_color = Colors.BRIGHT_YELLOW
+            signaller_display = f"{Colors.BRIGHT_YELLOW}New deployment created{Colors.RESET}"
+            tokens_str = format_tokens(tokens)
+            print(f"  [{symbol}]  {Colors.DIM}{timestamp:16}{Colors.RESET}  {signaller_display:44}  {token_color}{tokens_str:>18}{Colors.RESET}")
+            continue
+        elif change_type == 'upgrade':
             # Special handling for upgrades
             total_added += amount
             symbol = f"{Colors.BRIGHT_YELLOW}↑{Colors.RESET}"
@@ -1485,9 +1501,9 @@ Example:
         curation_signal = client.get_curation_signal(args.subgraph_hash)
         print_curation_signal(curation_signal)
         
-        # 3. Signal changes
+        # 3. Signal changes (pass new deployment info for display in history)
         signal_changes = client.get_curation_signal_changes(args.subgraph_hash, args.hours)
-        print_signal_changes(signal_changes, args.hours)
+        print_signal_changes(signal_changes, args.hours, curation_signal)
         
         # 4. Current allocations
         current_allocations = client.get_current_allocations(args.subgraph_hash)
