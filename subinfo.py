@@ -393,6 +393,7 @@ class TheGraphClient:
                 stakedTokens
                 deniedAt
                 indexingRewardAmount
+                queryFeesAmount
                 manifest {
                     network
                 }
@@ -521,9 +522,15 @@ class TheGraphClient:
         except:
             pass
         
+        # Get query fees
+        query_fees = deployment.get('queryFeesAmount', '0')
+        
         return {
             'network': network,
-            'rewardProportion': reward_proportion
+            'rewardProportion': reward_proportion,
+            'queryFees': query_fees,
+            'signalAmount': subgraph_signal,
+            'stakedTokens': subgraph_allocations
         }
     
     def get_curation_signal(self, subgraph_id: str) -> Optional[Dict]:
@@ -848,7 +855,34 @@ class ENSClient:
     
     def __init__(self, ens_subgraph_url: str):
         self.ens_subgraph_url = ens_subgraph_url.rstrip('/')
-        self._cache = {}  # Cache to avoid repeated queries
+        self._cache = {}  # In-memory cache
+        self._cache_file = Path.home() / '.subinfo' / 'ens_cache.json'
+        self._cache_duration = 86400  # 24 hours
+        self._load_cache()
+    
+    def _load_cache(self):
+        """Load ENS cache from disk"""
+        try:
+            if self._cache_file.exists():
+                with open(self._cache_file, 'r') as f:
+                    data = json.load(f)
+                # Check if cache is still valid
+                cache_time = data.get('_timestamp', 0)
+                if datetime.now().timestamp() - cache_time < self._cache_duration:
+                    self._cache = {k: v for k, v in data.items() if not k.startswith('_')}
+        except:
+            pass
+    
+    def _save_cache(self):
+        """Save ENS cache to disk"""
+        try:
+            self._cache_file.parent.mkdir(parents=True, exist_ok=True)
+            data = dict(self._cache)
+            data['_timestamp'] = datetime.now().timestamp()
+            with open(self._cache_file, 'w') as f:
+                json.dump(data, f)
+        except:
+            pass
     
     def query(self, query: str, variables: Optional[Dict] = None) -> Dict:
         """Execute a GraphQL query"""
@@ -944,6 +978,9 @@ class ENSClient:
                 if addr not in results:
                     results[addr] = None
                     self._cache[addr] = None
+            
+            # Save cache to disk
+            self._save_cache()
         except:
             pass
         
@@ -997,8 +1034,8 @@ def print_section(title: str):
     print(f"{Colors.DIM}{'-' * 60}{Colors.RESET}")
 
 
-def print_subgraph_metadata(metadata: Optional[Dict]):
-    """Display subgraph metadata"""
+def print_subgraph_metadata(metadata: Optional[Dict], num_allocations: int = 0):
+    """Display subgraph metadata with alerts"""
     if not metadata:
         return
     
@@ -1011,10 +1048,37 @@ def print_subgraph_metadata(metadata: Optional[Dict]):
     else:
         print(f"{Colors.BOLD}Network:{Colors.RESET} {Colors.DIM}Unknown{Colors.RESET}")
     
-    # Reward proportion
+    # Reward proportion with alert
     reward_proportion = metadata.get('rewardProportion')
     if reward_proportion is not None:
-        print(f"{Colors.BOLD}Reward Proportion:{Colors.RESET} {Colors.BRIGHT_CYAN}{reward_proportion:.2f}%{Colors.RESET}")
+        if reward_proportion < 50:
+            print(f"{Colors.BOLD}Reward Proportion:{Colors.RESET} {Colors.BRIGHT_RED}{reward_proportion:.2f}%{Colors.RESET} {Colors.BRIGHT_YELLOW}⚠ Low yield{Colors.RESET}")
+        elif reward_proportion > 150:
+            print(f"{Colors.BOLD}Reward Proportion:{Colors.RESET} {Colors.BRIGHT_GREEN}{reward_proportion:.2f}%{Colors.RESET} {Colors.BRIGHT_GREEN}✓ High yield{Colors.RESET}")
+        else:
+            print(f"{Colors.BOLD}Reward Proportion:{Colors.RESET} {Colors.BRIGHT_CYAN}{reward_proportion:.2f}%{Colors.RESET}")
+    
+    # Query fees
+    query_fees = metadata.get('queryFees', '0')
+    try:
+        fees_float = float(query_fees) / 1e18
+        if fees_float > 0:
+            fees_fmt = f"{fees_float:,.2f}" if fees_float < 1 else f"{fees_float:,.0f}"
+            print(f"{Colors.BOLD}Query Fees:{Colors.RESET} {Colors.BRIGHT_GREEN}{fees_fmt} GRT{Colors.RESET}")
+        else:
+            print(f"{Colors.BOLD}Query Fees:{Colors.RESET} {Colors.DIM}0 GRT{Colors.RESET}")
+    except:
+        pass
+    
+    # Alerts
+    alerts = []
+    if num_allocations < 3 and num_allocations > 0:
+        alerts.append(f"{Colors.BRIGHT_YELLOW}⚠ Few indexers ({num_allocations}){Colors.RESET}")
+    elif num_allocations == 0:
+        alerts.append(f"{Colors.BRIGHT_RED}⚠ No active allocations{Colors.RESET}")
+    
+    if alerts:
+        print(f"{Colors.BOLD}Alerts:{Colors.RESET} {' | '.join(alerts)}")
     
     print()
 
@@ -1451,11 +1515,28 @@ Example:
     parser.add_argument(
         '--hours',
         type=int,
-        default=48,
+        default=None,
         help='Number of hours for history (default: 48)'
+    )
+    parser.add_argument(
+        '--days',
+        type=int,
+        default=None,
+        help='Number of days for history (alternative to --hours)'
+    )
+    parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Output in JSON format for machine processing'
     )
     
     args = parser.parse_args()
+    
+    # Calculate hours from --days or --hours (default 48)
+    if args.days is not None:
+        args.hours = args.days * 24
+    elif args.hours is None:
+        args.hours = 48
     
     # Get network subgraph URL
     network_url = args.url or get_network_subgraph_url()
@@ -1469,7 +1550,11 @@ Example:
     # But we can also have just the base URL if the network is directly accessible
     # For now, we use the URL as is since it should point to the network subgraph
     
-    print(f"{Colors.BOLD}Subgraph:{Colors.RESET} {Colors.CYAN}{args.subgraph_hash}{Colors.RESET}\n")
+    # Disable colors for JSON output
+    if args.json:
+        Colors.disable()
+    else:
+        print(f"{Colors.BOLD}Subgraph:{Colors.RESET} {Colors.CYAN}{args.subgraph_hash}{Colors.RESET}\n")
     
     # Create client to query network subgraph
     client = TheGraphClient(network_url)
@@ -1477,14 +1562,20 @@ Example:
     # Verify it's the TheGraph Network subgraph
     try:
         if not client.is_network_subgraph():
-            print("Error: The configured URL does not appear to point to the TheGraph Network subgraph.")
-            print("The 'subinfo' tool requires the TheGraph Network subgraph URL")
-            print("that contains information about allocations and curation signals.")
-            print("\nConfigure the THEGRAPH_NETWORK_SUBGRAPH_URL environment variable")
-            print("or modify ~/.subinfo/config.json with 'network_subgraph_url'")
+            if args.json:
+                print(json.dumps({'error': 'Invalid network subgraph URL'}))
+            else:
+                print("Error: The configured URL does not appear to point to the TheGraph Network subgraph.")
+                print("The 'subinfo' tool requires the TheGraph Network subgraph URL")
+                print("that contains information about allocations and curation signals.")
+                print("\nConfigure the THEGRAPH_NETWORK_SUBGRAPH_URL environment variable")
+                print("or modify ~/.subinfo/config.json with 'network_subgraph_url'")
             sys.exit(1)
     except Exception as e:
-        print(f"Error verifying network subgraph: {e}", file=sys.stderr)
+        if args.json:
+            print(json.dumps({'error': str(e)}))
+        else:
+            print(f"Error verifying network subgraph: {e}", file=sys.stderr)
         sys.exit(1)
     
     # Get user's indexer ID
@@ -1493,35 +1584,72 @@ Example:
     # Initialize ENS client if configured
     ens_client = None
     ens_url = get_ens_subgraph_url()
-    if ens_url:
+    if ens_url and not args.json:  # Skip ENS for JSON output (faster)
         try:
             ens_client = ENSClient(ens_url)
         except Exception as e:
             print(f"{Colors.DIM}Warning: Unable to initialize ENS client: {e}{Colors.RESET}\n", file=sys.stderr)
     
     try:
-        # 1. Subgraph metadata
+        # Collect all data first
         subgraph_metadata = client.get_subgraph_metadata(args.subgraph_hash)
-        print_subgraph_metadata(subgraph_metadata)
-        
-        # 2. Curation signal
         curation_signal = client.get_curation_signal(args.subgraph_hash)
-        print_curation_signal(curation_signal)
-        
-        # 3. Signal changes (pass new deployment info for display in history)
         signal_changes = client.get_curation_signal_changes(args.subgraph_hash, args.hours)
-        print_signal_changes(signal_changes, args.hours, curation_signal)
-        
-        # 4. Current allocations
         current_allocations = client.get_current_allocations(args.subgraph_hash)
-        
-        # 5. Allocation history (created in last N hours)
         allocation_history = client.get_allocation_history(args.subgraph_hash, args.hours)
-        
-        # 6. Unallocations (closed in last N hours)
         unallocations = client.get_unallocations(args.subgraph_hash, args.hours)
         
-        # 7. Collect all indexer IDs and fetch their URLs (fallback for ENS)
+        # JSON output mode
+        if args.json:
+            output = {
+                'subgraph': args.subgraph_hash,
+                'hours': args.hours,
+                'metadata': {
+                    'network': subgraph_metadata.get('network') if subgraph_metadata else None,
+                    'rewardProportion': subgraph_metadata.get('rewardProportion') if subgraph_metadata else None,
+                    'queryFees': float(subgraph_metadata.get('queryFees', '0')) / 1e18 if subgraph_metadata else 0,
+                    'signalAmount': float(subgraph_metadata.get('signalAmount', '0')) / 1e18 if subgraph_metadata else 0,
+                    'stakedTokens': float(subgraph_metadata.get('stakedTokens', '0')) / 1e18 if subgraph_metadata else 0,
+                },
+                'curationSignal': {
+                    'total': float(curation_signal.get('signalAmount', '0')) / 1e18 if curation_signal else 0,
+                    'isNewDeployment': curation_signal.get('isNewDeployment', False) if curation_signal else False,
+                },
+                'signalChanges': [{
+                    'type': c.get('type'),
+                    'timestamp': int(c.get('timestamp', '0')),
+                    'amount': float(c.get('tokens', '0')) / 1e18,
+                    'signaller': c.get('signaller'),
+                } for c in signal_changes],
+                'activeAllocations': [{
+                    'indexer': a.get('indexer', {}).get('id'),
+                    'amount': float(a.get('allocatedTokens', '0')) / 1e18,
+                    'createdAt': int(a.get('createdAt', '0')),
+                    'status': a.get('status'),
+                } for a in current_allocations],
+                'allocationHistory': [{
+                    'indexer': a.get('indexer', {}).get('id'),
+                    'amount': float(a.get('allocatedTokens', '0')) / 1e18,
+                    'createdAt': int(a.get('createdAt', '0')),
+                    'status': a.get('status'),
+                } for a in allocation_history],
+                'unallocations': [{
+                    'indexer': u.get('indexer', {}).get('id'),
+                    'amount': float(u.get('allocatedTokens', '0')) / 1e18,
+                    'createdAt': int(u.get('createdAt', '0')),
+                    'closedAt': int(u.get('closedAt', '0')),
+                } for u in unallocations],
+                'summary': {
+                    'totalAllocated': sum(float(a.get('allocatedTokens', '0')) / 1e18 for a in current_allocations),
+                    'numAllocations': len(current_allocations),
+                    'numUnallocations': len(unallocations),
+                }
+            }
+            print(json.dumps(output, indent=2))
+            return
+        
+        # Normal display mode
+        # Collect indexer URLs for display
         all_indexer_ids = set()
         for alloc in current_allocations:
             all_indexer_ids.add(alloc.get('indexer', {}).get('id', ''))
@@ -1533,14 +1661,15 @@ Example:
         
         indexer_urls = client.get_indexers_urls(list(all_indexer_ids)) if all_indexer_ids else {}
         
-        # 8. Get stake info for indexers who unallocated (to detect high unallocated stake)
+        # Get stake info for indexers who unallocated
         unalloc_indexer_ids = [u.get('indexer', {}).get('id', '') for u in unallocations]
         indexers_stake_info = client.get_indexers_stake_info(unalloc_indexer_ids) if unalloc_indexer_ids else {}
         
-        # 9. Display allocations
+        # Display all sections
+        print_subgraph_metadata(subgraph_metadata, len(current_allocations))
+        print_curation_signal(curation_signal)
+        print_signal_changes(signal_changes, args.hours, curation_signal)
         print_allocations(current_allocations, "Active Allocations", my_indexer_id, ens_client, indexer_urls)
-        
-        # 10. Combined allocations/unallocations timeline
         print_allocations_timeline(allocation_history, unallocations, args.hours, my_indexer_id, ens_client, indexers_stake_info, indexer_urls)
         
     except requests.exceptions.RequestException as e:
