@@ -1070,9 +1070,9 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
         indexer_display_width = get_display_width(indexer_display)
         tokens_str_width = get_display_width(tokens_str)
         
-        # Target widths: marker=1, indexer=28, tokens=18, date=16
+        # Target widths: marker=1, indexer=37, tokens=18, date=16
         marker_padding = max(0, 1 - marker_width)
-        indexer_padding = max(0, 28 - indexer_display_width)
+        indexer_padding = max(0, 37 - indexer_display_width)
         tokens_padding = max(0, 18 - tokens_str_width)
         
         if alloc.get('closedAt'):
@@ -1168,10 +1168,10 @@ def print_allocations_timeline(allocations: List[Dict], unallocations: List[Dict
         indexer_display_width = get_display_width(indexer_display)
         tokens_str_width = get_display_width(tokens_str)
         
-        # Target widths: symbol=1, marker=1, indexer=28, tokens=18, date=16
+        # Target widths: symbol=1, marker=1, indexer=37, tokens=18, date=16
         symbol_padding = max(0, 1 - symbol_width)
         marker_padding = max(0, 1 - marker_width)
-        indexer_padding = max(0, 28 - indexer_display_width)
+        indexer_padding = max(0, 37 - indexer_display_width)
         tokens_padding = max(0, 18 - tokens_str_width)
         
         if event['type'] == 'allocation':
@@ -1353,7 +1353,7 @@ def get_ens_subgraph_url() -> Optional[str]:
     return None
 
 
-def format_indexer_display(indexer_id: str, ens_name: Optional[str] = None, url: Optional[str] = None, max_width: int = 28) -> str:
+def format_indexer_display(indexer_id: str, ens_name: Optional[str] = None, url: Optional[str] = None, max_width: int = 37) -> str:
     """Format indexer display with ENS name or URL if available, truncated to max_width"""
     if ens_name:
         # Format: "ens_name (0x1234..)"
