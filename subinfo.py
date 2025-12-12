@@ -960,10 +960,12 @@ def format_timestamp(ts: str) -> str:
 
 
 def format_tokens(tokens: str) -> str:
-    """Format tokens to a readable format"""
+    """Format tokens to a readable format (no decimals unless < 1 GRT)"""
     try:
         amount = float(tokens) / 1e18  # GRT has 18 decimals
-        return f"{amount:,.2f} GRT"
+        if amount < 1:
+            return f"{amount:,.2f} GRT"
+        return f"{amount:,.0f} GRT"
     except:
         return tokens
 
