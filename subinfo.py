@@ -21,7 +21,7 @@ import argparse
 import os
 import re
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import requests
 from pathlib import Path
 
@@ -163,6 +163,9 @@ class TheGraphClient:
                 createdAt
                 closedAt
                 status
+                indexingRewards
+                indexingIndexerRewards
+                indexingDelegatorRewards
             }
         }
         """
@@ -393,7 +396,6 @@ class TheGraphClient:
                 stakedTokens
                 deniedAt
                 indexingRewardAmount
-                queryFeesAmount
                 manifest {
                     network
                 }
@@ -522,15 +524,9 @@ class TheGraphClient:
         except:
             pass
         
-        # Get query fees
-        query_fees = deployment.get('queryFeesAmount', '0')
-        
         return {
             'network': network,
-            'rewardProportion': reward_proportion,
-            'queryFees': query_fees,
-            'signalAmount': subgraph_signal,
-            'stakedTokens': subgraph_allocations
+            'rewardProportion': reward_proportion
         }
     
     def get_curation_signal(self, subgraph_id: str) -> Optional[Dict]:
@@ -540,7 +536,7 @@ class TheGraphClient:
         query GetCurationSignal($subgraphId: String!) {
             subgraphDeployment(id: $subgraphId) {
                 id
-                signalAmount
+                signalledTokens
                 createdAt
             }
         }
@@ -557,7 +553,7 @@ class TheGraphClient:
                     first: 1
                 ) {
                     id
-                    signalAmount
+                    signalledTokens
                     createdAt
                 }
             }
@@ -605,7 +601,7 @@ class TheGraphClient:
             signals = []
         
         return {
-            'signalAmount': deployment.get('signalAmount', '0'),
+            'signalledTokens': deployment.get('signalledTokens', '0'),
             'signals': signals,
             'isNewDeployment': is_new_deployment,
             'deploymentCreatedAt': deployment_created_at
@@ -857,7 +853,7 @@ class ENSClient:
         self.ens_subgraph_url = ens_subgraph_url.rstrip('/')
         self._cache = {}  # In-memory cache
         self._cache_file = Path.home() / '.subinfo' / 'ens_cache.json'
-        self._cache_duration = 86400  # 24 hours
+        self._cache_ttl = 86400  # 24 hours in seconds
         self._load_cache()
     
     def _load_cache(self):
@@ -865,11 +861,16 @@ class ENSClient:
         try:
             if self._cache_file.exists():
                 with open(self._cache_file, 'r') as f:
-                    data = json.load(f)
-                # Check if cache is still valid
-                cache_time = data.get('_timestamp', 0)
-                if datetime.now().timestamp() - cache_time < self._cache_duration:
-                    self._cache = {k: v for k, v in data.items() if not k.startswith('_')}
+                    cache_data = json.load(f)
+                    now = time.time()
+                    # Filter out expired entries
+                    for addr, entry in cache_data.items():
+                        if isinstance(entry, dict) and 'name' in entry and 'timestamp' in entry:
+                            if now - entry['timestamp'] < self._cache_ttl:
+                                self._cache[addr] = entry
+                        elif isinstance(entry, str):
+                            # Old format without timestamp - keep but will be refreshed
+                            self._cache[addr] = {'name': entry, 'timestamp': now - self._cache_ttl + 3600}
         except:
             pass
     
@@ -877,10 +878,8 @@ class ENSClient:
         """Save ENS cache to disk"""
         try:
             self._cache_file.parent.mkdir(parents=True, exist_ok=True)
-            data = dict(self._cache)
-            data['_timestamp'] = datetime.now().timestamp()
             with open(self._cache_file, 'w') as f:
-                json.dump(data, f)
+                json.dump(self._cache, f, indent=2)
         except:
             pass
     
@@ -909,7 +908,10 @@ class ENSClient:
         # Check cache
         address_lower = address.lower()
         if address_lower in self._cache:
-            return self._cache[address_lower]
+            entry = self._cache[address_lower]
+            if isinstance(entry, dict):
+                return entry.get('name')
+            return entry  # Old format compatibility
         
         # Query to find ENS name
         query = """
@@ -931,13 +933,15 @@ class ENSClient:
             if domains:
                 name = domains[0].get('name')
                 if name:
-                    self._cache[address_lower] = name
+                    self._cache[address_lower] = {'name': name, 'timestamp': time.time()}
+                    self._save_cache()
                     return name
         except:
             pass
         
         # If not found, put None in cache to avoid retrying
-        self._cache[address_lower] = None
+        self._cache[address_lower] = {'name': None, 'timestamp': time.time()}
+        self._save_cache()
         return None
     
     def resolve_addresses_batch(self, addresses: List[str]) -> Dict[str, Optional[str]]:
@@ -971,15 +975,14 @@ class ENSClient:
                 name = domain.get('name')
                 if addr and name:
                     results[addr] = name
-                    self._cache[addr] = name
+                    self._cache[addr] = {'name': name, 'timestamp': time.time()}
             
             # Put None for addresses not found
             for addr in addresses_lower:
                 if addr not in results:
                     results[addr] = None
-                    self._cache[addr] = None
+                    self._cache[addr] = {'name': None, 'timestamp': time.time()}
             
-            # Save cache to disk
             self._save_cache()
         except:
             pass
@@ -997,12 +1000,10 @@ def format_timestamp(ts: str) -> str:
 
 
 def format_tokens(tokens: str) -> str:
-    """Format tokens to a readable format (no decimals unless < 1 GRT)"""
+    """Format tokens to a readable format"""
     try:
         amount = float(tokens) / 1e18  # GRT has 18 decimals
-        if amount < 1:
-            return f"{amount:,.2f} GRT"
-        return f"{amount:,.0f} GRT"
+        return f"{amount:,.2f} GRT"
     except:
         return tokens
 
@@ -1034,8 +1035,8 @@ def print_section(title: str):
     print(f"{Colors.DIM}{'-' * 60}{Colors.RESET}")
 
 
-def print_subgraph_metadata(metadata: Optional[Dict], num_allocations: int = 0):
-    """Display subgraph metadata with alerts"""
+def print_subgraph_metadata(metadata: Optional[Dict]):
+    """Display subgraph metadata"""
     if not metadata:
         return
     
@@ -1048,42 +1049,88 @@ def print_subgraph_metadata(metadata: Optional[Dict], num_allocations: int = 0):
     else:
         print(f"{Colors.BOLD}Network:{Colors.RESET} {Colors.DIM}Unknown{Colors.RESET}")
     
-    # Reward proportion with alert
+    # Reward proportion
     reward_proportion = metadata.get('rewardProportion')
     if reward_proportion is not None:
-        if reward_proportion < 50:
-            print(f"{Colors.BOLD}Reward Proportion:{Colors.RESET} {Colors.BRIGHT_RED}{reward_proportion:.2f}%{Colors.RESET} {Colors.BRIGHT_YELLOW}⚠ Low yield{Colors.RESET}")
-        elif reward_proportion > 150:
-            print(f"{Colors.BOLD}Reward Proportion:{Colors.RESET} {Colors.BRIGHT_GREEN}{reward_proportion:.2f}%{Colors.RESET} {Colors.BRIGHT_GREEN}✓ High yield{Colors.RESET}")
-        else:
-            print(f"{Colors.BOLD}Reward Proportion:{Colors.RESET} {Colors.BRIGHT_CYAN}{reward_proportion:.2f}%{Colors.RESET}")
-    
-    # Query fees
-    query_fees = metadata.get('queryFees', '0')
-    try:
-        fees_float = float(query_fees) / 1e18
-        if fees_float > 0:
-            fees_fmt = f"{fees_float:,.2f}" if fees_float < 1 else f"{fees_float:,.0f}"
-            print(f"{Colors.BOLD}Query Fees:{Colors.RESET} {Colors.BRIGHT_GREEN}{fees_fmt} GRT{Colors.RESET}")
-        else:
-            print(f"{Colors.BOLD}Query Fees:{Colors.RESET} {Colors.DIM}0 GRT{Colors.RESET}")
-    except:
-        pass
-    
-    # Alerts
-    alerts = []
-    if num_allocations < 3 and num_allocations > 0:
-        alerts.append(f"{Colors.BRIGHT_YELLOW}⚠ Few indexers ({num_allocations}){Colors.RESET}")
-    elif num_allocations == 0:
-        alerts.append(f"{Colors.BRIGHT_RED}⚠ No active allocations{Colors.RESET}")
-    
-    if alerts:
-        print(f"{Colors.BOLD}Alerts:{Colors.RESET} {' | '.join(alerts)}")
+        print(f"{Colors.BOLD}Reward Proportion:{Colors.RESET} {Colors.BRIGHT_CYAN}{reward_proportion:.2f}%{Colors.RESET}")
     
     print()
 
 
-def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Optional[str] = None, ens_client: Optional[ENSClient] = None, indexer_urls: Optional[Dict[str, str]] = None):
+def get_accrued_rewards_from_contract(allocation_id: str, rpc_url: str = "https://arb1.arbitrum.io/rpc") -> Optional[Tuple[float, float, float]]:
+    """
+    Get exact accrued rewards from the RewardsManager smart contract.
+    
+    Calls getRewards(address _rewardsIssuer, address _allocationID) on RewardsManager.
+    Tries both Staking (legacy) and SubgraphService (new Horizon) as rewards issuers.
+    
+    Returns: (total_rewards, indexer_rewards, delegator_rewards) or None if failed
+    """
+    try:
+        from web3 import Web3
+        
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        
+        # Contract addresses on Arbitrum One
+        REWARDS_MANAGER = "0x971b9d3d0ae3eca029cab5ea1fb0f72c85e6a525"
+        STAKING = "0x00669a4cf01450b64e8a2a20e9b1fcb71e61ef03"
+        SUBGRAPH_SERVICE = "0xb2bb92d0de618878e438b55d5846cfecd9301105"
+        
+        # Function selector for getRewards(address,address)
+        selector = Web3.keccak(text="getRewards(address,address)")[:4].hex()
+        
+        total_rewards = 0.0
+        
+        # Try both rewards issuers (legacy Staking and new SubgraphService)
+        for issuer in [STAKING, SUBGRAPH_SERVICE]:
+            try:
+                calldata = selector + issuer[2:].lower().zfill(64) + allocation_id[2:].lower().zfill(64)
+                result = w3.eth.call({
+                    "to": Web3.to_checksum_address(REWARDS_MANAGER),
+                    "data": f"0x{calldata}"
+                })
+                rewards_wei = int(result.hex(), 16)
+                if rewards_wei > 0:
+                    total_rewards = rewards_wei / 1e18
+                    break
+            except:
+                continue
+        
+        return total_rewards
+    except ImportError:
+        # web3 not installed
+        return None
+    except Exception as e:
+        # RPC call failed
+        return None
+
+
+def get_indexer_reward_cut(indexer_id: str, network_url: str) -> Optional[float]:
+    """Get the indexer's reward cut (percentage kept by indexer vs delegators)"""
+    try:
+        # Remove trailing slash if present
+        url = network_url.rstrip('/')
+        
+        query = """
+        query GetIndexer($id: String!) {
+            indexer(id: $id) {
+                indexingRewardCut
+            }
+        }
+        """
+        response = requests.post(url, json={'query': query, 'variables': {'id': indexer_id.lower()}})
+        data = response.json().get('data', {})
+        indexer = data.get('indexer')
+        if indexer:
+            # indexingRewardCut is in PPM (parts per million)
+            cut_ppm = int(indexer.get('indexingRewardCut', 0))
+            return cut_ppm / 1_000_000  # Convert to decimal (0.265 = 26.5%)
+        return None
+    except:
+        return None
+
+
+def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Optional[str] = None, ens_client: Optional[ENSClient] = None, indexer_urls: Optional[Dict[str, str]] = None, reward_proportion: Optional[float] = None, network_url: Optional[str] = None):
     """Display allocations in a compact format with colors"""
     print_section(title)
     if not allocations:
@@ -1097,6 +1144,11 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
         ens_names = ens_client.resolve_addresses_batch(indexer_addresses)
     
     total = 0
+    my_accrued_rewards = None
+    my_allocation_amount = 0.0
+    my_allocation_days = 0.0
+    my_allocation_id = None
+    
     for alloc in allocations:
         indexer = alloc.get('indexer', {})
         indexer_id = indexer.get('id', 'Unknown')
@@ -1109,6 +1161,18 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
         if is_mine:
             marker = f"{Colors.BRIGHT_YELLOW}★{Colors.RESET}"
             indexer_color = Colors.BRIGHT_YELLOW
+            
+            # Get accrued rewards from smart contract
+            allocation_id = alloc.get('id', '')
+            created_ts = int(alloc.get('createdAt', '0'))
+            if created_ts > 0:
+                my_allocation_days = (datetime.now().timestamp() - created_ts) / 86400
+                my_allocation_amount = amount
+                my_allocation_id = allocation_id
+                
+                # Try to get real rewards from contract
+                if allocation_id:
+                    my_accrued_rewards = get_accrued_rewards_from_contract(allocation_id)
         else:
             marker = " "
             indexer_color = Colors.WHITE
@@ -1147,8 +1211,29 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
         else:
             print(f"  {marker}{' ' * marker_padding}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_GREEN}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  {Colors.DIM}{created}{Colors.RESET}  {status_color}{status}{Colors.RESET}{Colors.DIM}{duration_str}{Colors.RESET}")
     
-    total_fmt = f"{total:,.2f}" if total < 1 else f"{total:,.0f}"
-    print(f"\n{Colors.BOLD}Total: {Colors.BRIGHT_GREEN}{total_fmt} GRT{Colors.RESET}\n")
+    print(f"\n{Colors.BOLD}Total: {Colors.BRIGHT_GREEN}{total:,.2f} GRT{Colors.RESET}")
+    
+    # Display accrued rewards for my allocation
+    if my_indexer_id and my_allocation_id:
+        print(f"\n{Colors.BOLD}Your Allocation:{Colors.RESET}")
+        print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Allocated: {Colors.BRIGHT_GREEN}{my_allocation_amount:,.0f} GRT{Colors.RESET} for {Colors.DIM}{my_allocation_days:.1f} days{Colors.RESET}")
+        if my_accrued_rewards is not None:
+            if my_accrued_rewards > 0:
+                print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Accrued rewards: {Colors.BRIGHT_CYAN}{my_accrued_rewards:,.2f} GRT{Colors.RESET}")
+                
+                # Get indexer reward cut and calculate split
+                reward_cut = get_indexer_reward_cut(my_indexer_id, network_url) if network_url else None
+                if reward_cut is not None:
+                    indexer_share = my_accrued_rewards * reward_cut
+                    delegator_share = my_accrued_rewards * (1 - reward_cut)
+                    print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Indexer share ({reward_cut*100:.1f}%): {Colors.BRIGHT_GREEN}{indexer_share:,.2f} GRT{Colors.RESET}")
+                    print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Delegator share ({(1-reward_cut)*100:.1f}%): {Colors.DIM}{delegator_share:,.2f} GRT{Colors.RESET}")
+            else:
+                print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Accrued rewards: {Colors.DIM}0 GRT (no POI submitted yet){Colors.RESET}")
+        else:
+            print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Accrued rewards: {Colors.DIM}(install web3 for exact value){Colors.RESET}")
+    
+    print()
 
 
 def print_allocations_timeline(allocations: List[Dict], unallocations: List[Dict], hours: int = 48, my_indexer_id: Optional[str] = None, ens_client: Optional[ENSClient] = None, indexers_stake_info: Optional[Dict] = None, indexer_urls: Optional[Dict[str, str]] = None):
@@ -1258,9 +1343,7 @@ def print_allocations_timeline(allocations: List[Dict], unallocations: List[Dict
                     warning = f" {Colors.BRIGHT_YELLOW}⚠ {unalloc_pct:.0f}% unallocated{Colors.RESET}"
             print(f"  [{symbol}]{' ' * symbol_padding} {marker}{' ' * marker_padding}  {Colors.DIM}{timestamp}{Colors.RESET}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_RED}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  closed{warning}")
     
-    alloc_fmt = f"{total_allocated:,.2f}" if total_allocated < 1 else f"{total_allocated:,.0f}"
-    unalloc_fmt = f"{total_unallocated:,.2f}" if total_unallocated < 1 else f"{total_unallocated:,.0f}"
-    print(f"\n{Colors.BOLD}Total allocated: {Colors.BRIGHT_GREEN}{alloc_fmt} GRT{Colors.RESET} | Total unallocated: {Colors.BRIGHT_RED}{unalloc_fmt} GRT{Colors.RESET}\n")
+    print(f"\n{Colors.BOLD}Total allocated: {Colors.BRIGHT_GREEN}{total_allocated:,.2f} GRT{Colors.RESET} | Total unallocated: {Colors.BRIGHT_RED}{total_unallocated:,.2f} GRT{Colors.RESET}\n")
 
 
 def print_curation_signal(signal_data: Optional[Dict]):
@@ -1270,8 +1353,15 @@ def print_curation_signal(signal_data: Optional[Dict]):
         print(f"{Colors.DIM}No curation signal found.{Colors.RESET}\n")
         return
     
-    signal_amount = format_tokens(signal_data.get('signalAmount', '0'))
+    signal_amount = format_tokens(signal_data.get('signalledTokens', '0'))
     print(f"{Colors.BOLD}Total signal:{Colors.RESET} {Colors.BRIGHT_CYAN}{signal_amount}{Colors.RESET}")
+    
+    # Display if it's a new deployment
+    if signal_data.get('isNewDeployment'):
+        deployment_created_at = signal_data.get('deploymentCreatedAt')
+        if deployment_created_at:
+            created_date = format_timestamp(str(deployment_created_at))[:16]
+            print(f"{Colors.BRIGHT_YELLOW}⚠️  New deployment{Colors.RESET} (created {Colors.DIM}{created_date}{Colors.RESET})")
     
     signals = signal_data.get('signals', [])
     if signals:
@@ -1279,32 +1369,17 @@ def print_curation_signal(signal_data: Optional[Dict]):
     print()
 
 
-def print_signal_changes(changes: List[Dict], hours: int = 48, new_deployment_info: Optional[Dict] = None):
+def print_signal_changes(changes: List[Dict], hours: int = 48):
     """Display signal changes in a compact format with colors"""
     print_section(f"Signal Changes ({hours}h)")
-    
-    # Add new deployment event if applicable
-    display_changes = list(changes)
-    if new_deployment_info and new_deployment_info.get('isNewDeployment'):
-        created_at = new_deployment_info.get('deploymentCreatedAt')
-        signal_amount = new_deployment_info.get('signalAmount', '0')
-        if created_at:
-            display_changes.append({
-                'type': 'new_deployment',
-                'timestamp': created_at,
-                'tokens': signal_amount
-            })
-            # Sort by timestamp descending
-            display_changes.sort(key=lambda x: int(x.get('timestamp', '0')), reverse=True)
-    
-    if not display_changes:
+    if not changes:
         print(f"{Colors.DIM}No changes found.{Colors.RESET}\n")
         return
     
     total_added = 0
     total_removed = 0
     
-    for change in display_changes:
+    for change in changes:
         change_type = change.get('type', 'unknown')
         tokens = change.get('tokens', '0')
         amount = float(tokens) / 1e18
@@ -1312,15 +1387,7 @@ def print_signal_changes(changes: List[Dict], hours: int = 48, new_deployment_in
         signaller_short = signaller[:10] + "..." if len(signaller) > 10 else signaller
         timestamp = format_timestamp(str(change.get('timestamp', '0')))[:16]
         
-        if change_type == 'new_deployment':
-            # New deployment indicator
-            symbol = f"{Colors.BRIGHT_YELLOW}★{Colors.RESET}"
-            token_color = Colors.BRIGHT_YELLOW
-            signaller_display = f"{Colors.BRIGHT_YELLOW}New deployment created{Colors.RESET}"
-            tokens_str = format_tokens(tokens)
-            print(f"  [{symbol}]  {Colors.DIM}{timestamp:16}{Colors.RESET}  {signaller_display:44}  {token_color}{tokens_str:>18}{Colors.RESET}")
-            continue
-        elif change_type == 'upgrade':
+        if change_type == 'upgrade':
             # Special handling for upgrades
             total_added += amount
             symbol = f"{Colors.BRIGHT_YELLOW}↑{Colors.RESET}"
@@ -1343,10 +1410,7 @@ def print_signal_changes(changes: List[Dict], hours: int = 48, new_deployment_in
     
     net = total_added - total_removed
     net_color = Colors.BRIGHT_GREEN if net >= 0 else Colors.BRIGHT_RED
-    added_fmt = f"{total_added:,.2f}" if total_added < 1 else f"{total_added:,.0f}"
-    removed_fmt = f"{total_removed:,.2f}" if total_removed < 1 else f"{total_removed:,.0f}"
-    net_fmt = f"{net:,.2f}" if abs(net) < 1 else f"{net:,.0f}"
-    print(f"\n{Colors.BOLD}Total added: {Colors.BRIGHT_GREEN}{added_fmt} GRT{Colors.RESET} | Removed: {Colors.BRIGHT_RED}{removed_fmt} GRT{Colors.RESET} | Net: {net_color}{net_fmt} GRT{Colors.RESET}\n")
+    print(f"\n{Colors.BOLD}Total added: {Colors.BRIGHT_GREEN}{total_added:,.2f} GRT{Colors.RESET} | Removed: {Colors.BRIGHT_RED}{total_removed:,.2f} GRT{Colors.RESET} | Net: {net_color}{net:,.2f} GRT{Colors.RESET}\n")
 
 
 def get_network_subgraph_url() -> str:
@@ -1515,28 +1579,11 @@ Example:
     parser.add_argument(
         '--hours',
         type=int,
-        default=None,
+        default=48,
         help='Number of hours for history (default: 48)'
-    )
-    parser.add_argument(
-        '--days',
-        type=int,
-        default=None,
-        help='Number of days for history (alternative to --hours)'
-    )
-    parser.add_argument(
-        '--json',
-        action='store_true',
-        help='Output in JSON format for machine processing'
     )
     
     args = parser.parse_args()
-    
-    # Calculate hours from --days or --hours (default 48)
-    if args.days is not None:
-        args.hours = args.days * 24
-    elif args.hours is None:
-        args.hours = 48
     
     # Get network subgraph URL
     network_url = args.url or get_network_subgraph_url()
@@ -1550,11 +1597,8 @@ Example:
     # But we can also have just the base URL if the network is directly accessible
     # For now, we use the URL as is since it should point to the network subgraph
     
-    # Disable colors for JSON output
-    if args.json:
-        Colors.disable()
-    else:
-        print(f"{Colors.BOLD}Subgraph:{Colors.RESET} {Colors.CYAN}{args.subgraph_hash}{Colors.RESET}\n")
+    print(f"{Colors.BOLD}Subgraph:{Colors.RESET} {Colors.CYAN}{args.subgraph_hash}{Colors.RESET}")
+    print(f"{Colors.BOLD}Network:{Colors.RESET} {Colors.DIM}{network_url}{Colors.RESET}\n")
     
     # Create client to query network subgraph
     client = TheGraphClient(network_url)
@@ -1562,20 +1606,14 @@ Example:
     # Verify it's the TheGraph Network subgraph
     try:
         if not client.is_network_subgraph():
-            if args.json:
-                print(json.dumps({'error': 'Invalid network subgraph URL'}))
-            else:
-                print("Error: The configured URL does not appear to point to the TheGraph Network subgraph.")
-                print("The 'subinfo' tool requires the TheGraph Network subgraph URL")
-                print("that contains information about allocations and curation signals.")
-                print("\nConfigure the THEGRAPH_NETWORK_SUBGRAPH_URL environment variable")
-                print("or modify ~/.subinfo/config.json with 'network_subgraph_url'")
+            print("Error: The configured URL does not appear to point to the TheGraph Network subgraph.")
+            print("The 'subinfo' tool requires the TheGraph Network subgraph URL")
+            print("that contains information about allocations and curation signals.")
+            print("\nConfigure the THEGRAPH_NETWORK_SUBGRAPH_URL environment variable")
+            print("or modify ~/.subinfo/config.json with 'network_subgraph_url'")
             sys.exit(1)
     except Exception as e:
-        if args.json:
-            print(json.dumps({'error': str(e)}))
-        else:
-            print(f"Error verifying network subgraph: {e}", file=sys.stderr)
+        print(f"Error verifying network subgraph: {e}", file=sys.stderr)
         sys.exit(1)
     
     # Get user's indexer ID
@@ -1584,72 +1622,35 @@ Example:
     # Initialize ENS client if configured
     ens_client = None
     ens_url = get_ens_subgraph_url()
-    if ens_url and not args.json:  # Skip ENS for JSON output (faster)
+    if ens_url:
         try:
             ens_client = ENSClient(ens_url)
         except Exception as e:
             print(f"{Colors.DIM}Warning: Unable to initialize ENS client: {e}{Colors.RESET}\n", file=sys.stderr)
     
     try:
-        # Collect all data first
+        # 1. Subgraph metadata
         subgraph_metadata = client.get_subgraph_metadata(args.subgraph_hash)
+        print_subgraph_metadata(subgraph_metadata)
+        
+        # 2. Curation signal
         curation_signal = client.get_curation_signal(args.subgraph_hash)
+        print_curation_signal(curation_signal)
+        
+        # 3. Signal changes
         signal_changes = client.get_curation_signal_changes(args.subgraph_hash, args.hours)
+        print_signal_changes(signal_changes, args.hours)
+        
+        # 4. Current allocations
         current_allocations = client.get_current_allocations(args.subgraph_hash)
+        
+        # 5. Allocation history (created in last N hours)
         allocation_history = client.get_allocation_history(args.subgraph_hash, args.hours)
+        
+        # 6. Unallocations (closed in last N hours)
         unallocations = client.get_unallocations(args.subgraph_hash, args.hours)
         
-        # JSON output mode
-        if args.json:
-            output = {
-                'subgraph': args.subgraph_hash,
-                'hours': args.hours,
-                'metadata': {
-                    'network': subgraph_metadata.get('network') if subgraph_metadata else None,
-                    'rewardProportion': subgraph_metadata.get('rewardProportion') if subgraph_metadata else None,
-                    'queryFees': float(subgraph_metadata.get('queryFees', '0')) / 1e18 if subgraph_metadata else 0,
-                    'signalAmount': float(subgraph_metadata.get('signalAmount', '0')) / 1e18 if subgraph_metadata else 0,
-                    'stakedTokens': float(subgraph_metadata.get('stakedTokens', '0')) / 1e18 if subgraph_metadata else 0,
-                },
-                'curationSignal': {
-                    'total': float(curation_signal.get('signalAmount', '0')) / 1e18 if curation_signal else 0,
-                    'isNewDeployment': curation_signal.get('isNewDeployment', False) if curation_signal else False,
-                },
-                'signalChanges': [{
-                    'type': c.get('type'),
-                    'timestamp': int(c.get('timestamp', '0')),
-                    'amount': float(c.get('tokens', '0')) / 1e18,
-                    'signaller': c.get('signaller'),
-                } for c in signal_changes],
-                'activeAllocations': [{
-                    'indexer': a.get('indexer', {}).get('id'),
-                    'amount': float(a.get('allocatedTokens', '0')) / 1e18,
-                    'createdAt': int(a.get('createdAt', '0')),
-                    'status': a.get('status'),
-                } for a in current_allocations],
-                'allocationHistory': [{
-                    'indexer': a.get('indexer', {}).get('id'),
-                    'amount': float(a.get('allocatedTokens', '0')) / 1e18,
-                    'createdAt': int(a.get('createdAt', '0')),
-                    'status': a.get('status'),
-                } for a in allocation_history],
-                'unallocations': [{
-                    'indexer': u.get('indexer', {}).get('id'),
-                    'amount': float(u.get('allocatedTokens', '0')) / 1e18,
-                    'createdAt': int(u.get('createdAt', '0')),
-                    'closedAt': int(u.get('closedAt', '0')),
-                } for u in unallocations],
-                'summary': {
-                    'totalAllocated': sum(float(a.get('allocatedTokens', '0')) / 1e18 for a in current_allocations),
-                    'numAllocations': len(current_allocations),
-                    'numUnallocations': len(unallocations),
-                }
-            }
-            print(json.dumps(output, indent=2))
-            return
-        
-        # Normal display mode
-        # Collect indexer URLs for display
+        # 7. Collect all indexer IDs and fetch their URLs (fallback for ENS)
         all_indexer_ids = set()
         for alloc in current_allocations:
             all_indexer_ids.add(alloc.get('indexer', {}).get('id', ''))
@@ -1661,15 +1662,15 @@ Example:
         
         indexer_urls = client.get_indexers_urls(list(all_indexer_ids)) if all_indexer_ids else {}
         
-        # Get stake info for indexers who unallocated
+        # 8. Get stake info for indexers who unallocated (to detect high unallocated stake)
         unalloc_indexer_ids = [u.get('indexer', {}).get('id', '') for u in unallocations]
         indexers_stake_info = client.get_indexers_stake_info(unalloc_indexer_ids) if unalloc_indexer_ids else {}
         
-        # Display all sections
-        print_subgraph_metadata(subgraph_metadata, len(current_allocations))
-        print_curation_signal(curation_signal)
-        print_signal_changes(signal_changes, args.hours, curation_signal)
-        print_allocations(current_allocations, "Active Allocations", my_indexer_id, ens_client, indexer_urls)
+        # 9. Display allocations (with reward proportion for accrued rewards estimation)
+        reward_proportion = subgraph_metadata.get('rewardProportion') if subgraph_metadata else None
+        print_allocations(current_allocations, "Active Allocations", my_indexer_id, ens_client, indexer_urls, reward_proportion, network_url)
+        
+        # 10. Combined allocations/unallocations timeline
         print_allocations_timeline(allocation_history, unallocations, args.hours, my_indexer_id, ens_client, indexers_stake_info, indexer_urls)
         
     except requests.exceptions.RequestException as e:
