@@ -20,6 +20,7 @@ import json
 import argparse
 import os
 import re
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import requests
@@ -952,7 +953,23 @@ class ENSClient:
         if not addresses_lower:
             return results
         
-        # Batch query
+        # Check cache first
+        to_query = []
+        for addr in addresses_lower:
+            if addr in self._cache:
+                entry = self._cache[addr]
+                if isinstance(entry, dict):
+                    results[addr] = entry.get('name')
+                else:
+                    results[addr] = entry
+            else:
+                to_query.append(addr)
+        
+        # If all addresses were cached, return early
+        if not to_query:
+            return results
+        
+        # Batch query only for uncached addresses
         query = """
         query ResolveAddresses($addresses: [String!]!) {
             domains(
@@ -968,7 +985,7 @@ class ENSClient:
         """
         
         try:
-            result = self.query(query, {'addresses': addresses_lower})
+            result = self.query(query, {'addresses': to_query})
             domains = result.get('domains', [])
             for domain in domains:
                 addr = domain.get('resolvedAddress', {}).get('id', '').lower()
@@ -978,7 +995,7 @@ class ENSClient:
                     self._cache[addr] = {'name': name, 'timestamp': time.time()}
             
             # Put None for addresses not found
-            for addr in addresses_lower:
+            for addr in to_query:
                 if addr not in results:
                     results[addr] = None
                     self._cache[addr] = {'name': None, 'timestamp': time.time()}
