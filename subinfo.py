@@ -1108,8 +1108,7 @@ def format_duration(seconds: float) -> str:
 
 def print_section(title: str):
     """Display a compact section title with color"""
-    print(f"\n{Colors.CYAN}{Colors.BOLD}{title}{Colors.RESET}")
-    print(f"{Colors.DIM}{'-' * 60}{Colors.RESET}")
+    print(f"\n{Colors.CYAN}▸ {title}{Colors.RESET}")
 
 
 def print_subgraph_metadata(metadata: Optional[Dict]):
@@ -1130,8 +1129,6 @@ def print_subgraph_metadata(metadata: Optional[Dict]):
     reward_proportion = metadata.get('rewardProportion')
     if reward_proportion is not None:
         print(f"{Colors.BOLD}Reward Proportion:{Colors.RESET} {Colors.BRIGHT_CYAN}{reward_proportion:.2f}%{Colors.RESET}")
-    
-    print()
 
 
 def get_accrued_rewards_from_contract(allocation_id: str, rpc_url: str = "https://arb1.arbitrum.io/rpc") -> Optional[Tuple[float, float, float]]:
@@ -1211,7 +1208,7 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
     """Display allocations in a compact format with colors"""
     print_section(title)
     if not allocations:
-        print(f"{Colors.DIM}No allocations found.{Colors.RESET}\n")
+        print(f"{Colors.DIM}No allocations found.{Colors.RESET}")
         return
     
     # Resolve ENS names in batch
@@ -1287,12 +1284,11 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
             print(f"  {marker}{' ' * marker_padding}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_GREEN}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  {Colors.DIM}{created}{Colors.RESET}  {status_color}{status}{Colors.RESET}")
         else:
             print(f"  {marker}{' ' * marker_padding}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_GREEN}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  {Colors.DIM}{created}{Colors.RESET}  {status_color}{status}{Colors.RESET}{Colors.DIM}{duration_str}{Colors.RESET}")
-    
-    print(f"\n{Colors.BOLD}Total: {Colors.BRIGHT_GREEN}{total:,.2f} GRT{Colors.RESET}")
+    print(f"{Colors.BOLD}Total: {Colors.BRIGHT_GREEN}{format_tokens(str(int(total * 1e18)))}{Colors.RESET}")
     
     # Display accrued rewards for my allocation
     if my_indexer_id and my_allocation_id:
-        print(f"\n{Colors.BOLD}Your Allocation:{Colors.RESET}")
+        print(f"{Colors.BOLD}Your Allocation:{Colors.RESET}")
         print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Allocated: {Colors.BRIGHT_GREEN}{my_allocation_amount:,.0f} GRT{Colors.RESET} for {Colors.DIM}{my_allocation_days:.1f} days{Colors.RESET}")
         if my_accrued_rewards is not None:
             if my_accrued_rewards > 0:
@@ -1309,8 +1305,6 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
                 print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Accrued rewards: {Colors.DIM}0 GRT (no POI submitted yet){Colors.RESET}")
         else:
             print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Accrued rewards: {Colors.DIM}(install web3 for exact value){Colors.RESET}")
-    
-    print()
 
 
 def print_allocations_timeline(allocations: List[Dict], unallocations: List[Dict], poi_submissions: List[Dict] = None, hours: int = 48, my_indexer_id: Optional[str] = None, ens_client: Optional[ENSClient] = None, indexers_stake_info: Optional[Dict] = None, indexer_urls: Optional[Dict[str, str]] = None):
@@ -1363,7 +1357,7 @@ def print_allocations_timeline(allocations: List[Dict], unallocations: List[Dict
                 })
     
     if not events:
-        print(f"{Colors.DIM}No events found.{Colors.RESET}\n")
+        print(f"{Colors.DIM}No events found.{Colors.RESET}")
         return
     
     # Resolve ENS names in batch
@@ -1451,14 +1445,14 @@ def print_allocations_timeline(allocations: List[Dict], unallocations: List[Dict
                     warning = f" {Colors.BRIGHT_YELLOW}⚠ {unalloc_pct:.0f}% unallocated{Colors.RESET}"
             print(f"  [{symbol}]{' ' * symbol_padding} {marker}{' ' * marker_padding}  {Colors.DIM}{timestamp}{Colors.RESET}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_RED}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  closed{rewards_info}{warning}")
     
-    print(f"\n{Colors.BOLD}Total allocated: {Colors.BRIGHT_GREEN}{total_allocated:,.2f} GRT{Colors.RESET} | Total unallocated: {Colors.BRIGHT_RED}{total_unallocated:,.2f} GRT{Colors.RESET}\n")
+    print(f"{Colors.BOLD}Total:{Colors.RESET} {Colors.BRIGHT_GREEN}+{total_allocated:,.0f}{Colors.RESET} | {Colors.BRIGHT_RED}-{total_unallocated:,.0f} GRT{Colors.RESET}")
 
 
 def print_curation_signal(signal_data: Optional[Dict]):
     """Display curation signal in a compact format with colors"""
     print_section("Curation Signal")
     if not signal_data:
-        print(f"{Colors.DIM}No curation signal found.{Colors.RESET}\n")
+        print(f"{Colors.DIM}No curation signal found.{Colors.RESET}")
         return
     
     signal_amount = format_tokens(signal_data.get('signalledTokens', '0'))
@@ -1474,14 +1468,13 @@ def print_curation_signal(signal_data: Optional[Dict]):
     signals = signal_data.get('signals', [])
     if signals:
         print(f"{Colors.DIM}Signals: {len(signals)}{Colors.RESET}")
-    print()
 
 
 def print_signal_changes(changes: List[Dict], hours: int = 48):
     """Display signal changes in a compact format with colors"""
     print_section(f"Signal Changes ({hours}h)")
     if not changes:
-        print(f"{Colors.DIM}No changes found.{Colors.RESET}\n")
+        print(f"{Colors.DIM}No changes found.{Colors.RESET}")
         return
     
     total_added = 0
@@ -1518,7 +1511,7 @@ def print_signal_changes(changes: List[Dict], hours: int = 48):
     
     net = total_added - total_removed
     net_color = Colors.BRIGHT_GREEN if net >= 0 else Colors.BRIGHT_RED
-    print(f"\n{Colors.BOLD}Total added: {Colors.BRIGHT_GREEN}{total_added:,.2f} GRT{Colors.RESET} | Removed: {Colors.BRIGHT_RED}{total_removed:,.2f} GRT{Colors.RESET} | Net: {net_color}{net:,.2f} GRT{Colors.RESET}\n")
+    print(f"{Colors.BOLD}Total:{Colors.RESET} {Colors.BRIGHT_GREEN}+{total_added:,.0f}{Colors.RESET} | {Colors.BRIGHT_RED}-{total_removed:,.0f}{Colors.RESET} | Net: {net_color}{net:,.0f} GRT{Colors.RESET}")
 
 
 def get_network_subgraph_url() -> str:
@@ -1706,7 +1699,6 @@ Example:
     # For now, we use the URL as is since it should point to the network subgraph
     
     print(f"{Colors.BOLD}Subgraph:{Colors.RESET} {Colors.CYAN}{args.subgraph_hash}{Colors.RESET}")
-    print(f"{Colors.BOLD}Network:{Colors.RESET} {Colors.DIM}{network_url}{Colors.RESET}\n")
     
     # Create client to query network subgraph
     client = TheGraphClient(network_url)
