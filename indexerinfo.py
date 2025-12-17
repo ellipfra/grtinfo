@@ -171,7 +171,10 @@ class TheGraphClient:
                 url
                 stakedTokens
                 delegatedTokens
+                delegatedCapacity
                 allocatedTokens
+                availableStake
+                tokenCapacity
                 lockedTokens
                 unstakedTokens
                 indexingRewardCut
@@ -184,8 +187,6 @@ class TheGraphClient:
                 delegationExchangeRate
                 allocationCount
                 totalAllocationCount
-                totalReturn
-                annualizedReturn
                 createdAt
             }
         }
@@ -638,9 +639,17 @@ Examples:
     print_section("Stake")
     self_stake = int(indexer.get('stakedTokens', '0'))
     delegated = int(indexer.get('delegatedTokens', '0'))
+    delegated_capacity = int(indexer.get('delegatedCapacity', '0'))
     allocated = int(indexer.get('allocatedTokens', '0'))
-    total_stake = self_stake + delegated
-    remaining = total_stake - allocated
+    available_stake = int(indexer.get('availableStake', '0'))
+    token_capacity = int(indexer.get('tokenCapacity', '0'))
+    
+    # Delegations in thawing = delegated - delegatedCapacity
+    delegations_thawing = delegated - delegated_capacity
+    
+    # Use tokenCapacity for total usable stake (excludes thawing delegations)
+    total_stake = token_capacity if token_capacity > 0 else (self_stake + delegated)
+    remaining = available_stake if available_stake > 0 else (total_stake - allocated)
     remaining_pct = (remaining / total_stake * 100) if total_stake > 0 else 0
     
     # Delegation capacity (16x multiplier is the protocol default)
@@ -650,20 +659,24 @@ Examples:
     delegation_used_pct = (delegated / max_delegation * 100) if max_delegation > 0 else 0
     
     print(f"  Self stake:      {Colors.BRIGHT_GREEN}{format_tokens(str(self_stake))}{Colors.RESET}")
-    print(f"  Delegated:       {Colors.BRIGHT_CYAN}{format_tokens(str(delegated))}{Colors.RESET} / {format_tokens(str(max_delegation))} ({delegation_used_pct:.0f}%)")
+    delegated_str = f"{Colors.BRIGHT_CYAN}{format_tokens(str(delegated))}{Colors.RESET} / {format_tokens(str(max_delegation))} ({delegation_used_pct:.0f}%)"
+    if delegations_thawing > 0:
+        delegated_str += f" {Colors.DIM}({format_tokens(str(delegations_thawing))} thawing){Colors.RESET}"
+    print(f"  Delegated:       {delegated_str}")
     if delegation_remaining > 0:
         print(f"  Delegation room: {Colors.BRIGHT_GREEN}{format_tokens(str(delegation_remaining))}{Colors.RESET}")
     else:
         print(f"  Delegation room: {Colors.BRIGHT_RED}FULL{Colors.RESET}")
     print(f"  {Colors.BOLD}Total:           {format_tokens(str(total_stake))}{Colors.RESET}")
     print(f"  Allocated:       {format_tokens(str(allocated))}")
-    remaining_color = Colors.BRIGHT_YELLOW if remaining_pct > 30 else Colors.DIM
+    remaining_color = Colors.BRIGHT_GREEN if remaining_pct < 10 else (Colors.BRIGHT_YELLOW if remaining_pct > 30 else Colors.DIM)
     print(f"  Remaining:       {remaining_color}{format_tokens(str(remaining))} ({remaining_pct:.1f}%){Colors.RESET}")
     
     # Reward cuts
     # Raw cut applies to total rewards, but effective cut on delegators is different
     # Formula: rawcut = 1 - (1 - effective) * delegated / (delegated + stake)
     # Solving for effective: effective = 1 - (1 - rawcut) * (delegated + stake) / delegated
+    # Use raw delegated + self_stake (not token_capacity) for this calculation
     print_section("Reward Cuts")
     reward_cut_ppm = int(indexer.get('indexingRewardCut', 0))
     query_cut_ppm = int(indexer.get('queryFeeCut', 0))
@@ -671,10 +684,11 @@ Examples:
     raw_reward_cut = reward_cut_ppm / 1_000_000  # Convert PPM to decimal
     raw_query_cut = query_cut_ppm / 1_000_000
     
-    # Calculate effective cut on delegators
+    # Calculate effective cut on delegators using raw stake values (not adjusted for thawing)
+    raw_total = self_stake + delegated
     if delegated > 0:
-        effective_reward_cut = 1 - (1 - raw_reward_cut) * total_stake / delegated
-        effective_query_cut = 1 - (1 - raw_query_cut) * total_stake / delegated
+        effective_reward_cut = 1 - (1 - raw_reward_cut) * raw_total / delegated
+        effective_query_cut = 1 - (1 - raw_query_cut) * raw_total / delegated
     else:
         effective_reward_cut = raw_reward_cut
         effective_query_cut = raw_query_cut

@@ -846,16 +846,31 @@ class TheGraphClient:
                 })
             
             # Check for subgraph upgrades (signal transfer to new deployment)
+            # If we're viewing the OLD deployment, signal was transferred OUT (loss)
             if new_deployment_info is not None:
                 # Add upgrade as signal change (only if not already added)
-                upgrade_exists = any(c.get('type') == 'upgrade' and c.get('timestamp') == str(new_deployment_info['created']) for c in changes)
+                upgrade_exists = any(c.get('type') == 'upgrade_out' and c.get('timestamp') == str(new_deployment_info['created']) for c in changes)
                 if not upgrade_exists:
                     new_hash = new_deployment_info['hash']
                     new_subgraph_id = self.get_subgraph_id(new_hash) if new_hash != 'Unknown' else None
+                    # Get signal from the OLD deployment (what was transferred out)
+                    old_signal_query = f"""
+                    {{
+                        subgraphDeployment(id: "{old_deployment_id}") {{
+                            signalAmount
+                        }}
+                    }}
+                    """
+                    try:
+                        old_signal_result = self.query(old_signal_query)
+                        old_signal = old_signal_result.get('subgraphDeployment', {}).get('signalAmount', '0')
+                    except:
+                        old_signal = new_deployment_info['signal']  # Fallback to new signal
+                    
                     changes.insert(0, {  # Insert at beginning to show upgrade first
-                        'type': 'upgrade',
+                        'type': 'upgrade_out',  # Signal transferred OUT of this deployment
                         'signaller': 'Subgraph Upgrade',
-                        'tokens': new_deployment_info['signal'],
+                        'tokens': old_signal if old_signal != '0' else new_deployment_info['signal'],
                         'timestamp': str(new_deployment_info['created']),
                         'new_deployment_hash': new_hash,
                         'new_subgraph_id': new_subgraph_id
@@ -883,19 +898,22 @@ class TheGraphClient:
                         'oldDeploymentId': old_deployment_id,
                         'newDeploymentId': deployment_id
                     })
+                    old_deployment = upgrade_result.get('oldDeployment', {})
                     new_deployment = upgrade_result.get('newDeployment', {})
                     if new_deployment:
                         new_dep_created = int(new_deployment.get('createdAt', '0'))
+                        # Use old deployment's signal (what was transferred out)
+                        old_signal = old_deployment.get('signalAmount', '0') if old_deployment else '0'
                         new_signal = new_deployment.get('signalAmount', '0')
                         # Add upgrade as signal change (only if not already added)
-                        upgrade_exists = any(c.get('type') == 'upgrade' and c.get('timestamp') == str(new_dep_created) for c in changes)
+                        upgrade_exists = any(c.get('type') == 'upgrade_out' and c.get('timestamp') == str(new_dep_created) for c in changes)
                         if not upgrade_exists:
                             new_hash = new_deployment.get('ipfsHash', 'Unknown')
                             new_subgraph_id = self.get_subgraph_id(new_hash) if new_hash != 'Unknown' else None
                             changes.insert(0, {  # Insert at beginning to show upgrade first
-                                'type': 'upgrade',
+                                'type': 'upgrade_out',  # Signal transferred OUT of this deployment
                                 'signaller': 'Subgraph Upgrade',
-                                'tokens': new_signal,
+                                'tokens': old_signal if old_signal != '0' else new_signal,
                                 'timestamp': str(new_dep_created),
                                 'new_deployment_hash': new_hash,
                                 'new_subgraph_id': new_subgraph_id
@@ -1531,15 +1549,24 @@ def print_signal_changes(changes: List[Dict], hours: int = 48):
         signaller_short = signaller[:10] + "..." if len(signaller) > 10 else signaller
         timestamp = format_timestamp(str(change.get('timestamp', '0')))[:16]
         
-        if change_type == 'upgrade':
-            # Special handling for upgrades
-            total_added += amount
-            symbol = f"{Colors.BRIGHT_YELLOW}↑{Colors.RESET}"
-            token_color = Colors.BRIGHT_YELLOW
+        if change_type == 'upgrade_out':
+            # Signal was transferred OUT to a new deployment (loss for this deployment)
+            total_removed += amount
+            symbol = f"{Colors.BRIGHT_RED}↑{Colors.RESET}"
+            token_color = Colors.BRIGHT_RED
             new_hash = change.get('new_deployment_hash', 'Unknown')
             new_subgraph_id = change.get('new_subgraph_id')
             new_hash_link = format_deployment_link(new_hash, new_subgraph_id) if new_hash != 'Unknown' else new_hash
-            signaller_display = f"{Colors.BRIGHT_YELLOW}Upgrade → {new_hash_link}{Colors.RESET}"
+            signaller_display = f"{Colors.BRIGHT_RED}Upgraded → {new_hash_link}{Colors.RESET}"
+        elif change_type == 'upgrade':
+            # Signal was transferred IN from old deployment (gain for this deployment)
+            total_added += amount
+            symbol = f"{Colors.BRIGHT_GREEN}↑{Colors.RESET}"
+            token_color = Colors.BRIGHT_GREEN
+            new_hash = change.get('new_deployment_hash', 'Unknown')
+            new_subgraph_id = change.get('new_subgraph_id')
+            new_hash_link = format_deployment_link(new_hash, new_subgraph_id) if new_hash != 'Unknown' else new_hash
+            signaller_display = f"{Colors.BRIGHT_GREEN}Upgrade ← {new_hash_link}{Colors.RESET}"
         elif change_type == 'signal':
             total_added += amount
             symbol = f"{Colors.BRIGHT_GREEN}+{Colors.RESET}"
@@ -1552,7 +1579,11 @@ def print_signal_changes(changes: List[Dict], hours: int = 48):
             signaller_display = signaller_short
         
         tokens_str = format_tokens(tokens)
-        print(f"  [{symbol}]  {Colors.DIM}{timestamp:16}{Colors.RESET}  {signaller_display if change_type == 'upgrade' else Colors.WHITE + signaller_display + Colors.RESET:35}  {token_color}{tokens_str:>18}{Colors.RESET}")
+        if change_type in ('upgrade', 'upgrade_out'):
+            # Upgrades have longer display (includes full Qm hash link), no extra padding
+            print(f"  [{symbol}]  {Colors.DIM}{timestamp:16}{Colors.RESET}  {signaller_display}  {token_color}{tokens_str}{Colors.RESET}")
+        else:
+            print(f"  [{symbol}]  {Colors.DIM}{timestamp:16}{Colors.RESET}  {Colors.WHITE}{signaller_display:35}{Colors.RESET}  {token_color}{tokens_str:>18}{Colors.RESET}")
     
     net = total_added - total_removed
     net_color = Colors.BRIGHT_GREEN if net >= 0 else Colors.BRIGHT_RED
