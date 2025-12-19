@@ -1,0 +1,62 @@
+<svg class="terminal-output" viewBox="0 0 1260.0 478.0" xmlns="http://www.w3.org/2000/svg">
+    <style>
+        .terminal-text {
+            font-family: "Fira Code", monospace;
+            font-size: 20px;
+            line-height: 24.4px;
+        }
+        .terminal-title {
+            font-size: 18px;
+            font-weight: bold;
+            font-family: arial;
+        }
+    </style>
+    
+    <defs>
+        <clipPath id="terminal-clip">
+            <rect x="0" y="0" width="1220.0" height="418.0" />
+        </clipPath>
+    </defs>
+    
+    <!-- Background -->
+    <rect x="0" y="0" width="1260.0" height="478.0" fill="#292929" stroke="#555" stroke-width="1"/>
+    
+    <!-- Title -->
+    <text class="terminal-title" x="630.0" y="30" text-anchor="middle" fill="#c5c8c6">delegatorinfo</text>
+    
+    <!-- Terminal content -->
+    <g transform="translate(20, 40)" clip-path="url(#terminal-clip)">
+
+        <text class="terminal-text" x="0.0" y="24.4" fill="#c5c8c6" font-weight="bold" xml:space="preserve">Delegator:</text>
+        <text class="terminal-text" x="122.0" y="24.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve"> </text>
+        <text class="terminal-text" x="134.2" y="24.4" fill="#398280" font-weight="normal" xml:space="preserve">0xcd651393fed42023da9680829d1ff68af661f6c8</text>
+        <text class="terminal-text" x="0.0" y="80.5" fill="#398280" font-weight="normal" xml:space="preserve">▸ Portfolio</text>
+        <text class="terminal-text" x="0.0" y="104.9" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  </text>
+        <text class="terminal-text" x="24.4" y="104.9" fill="#c5c8c6" font-weight="normal" xml:space="preserve">              Staked           Accumulated               Thawing</text>
+        <text class="terminal-text" x="0.0" y="129.3" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  </text>
+        <text class="terminal-text" x="24.4" y="129.3" fill="#00823d" font-weight="normal" xml:space="preserve">      543,983.58 GRT</text>
+        <text class="terminal-text" x="268.4" y="129.3" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  </text>
+        <text class="terminal-text" x="292.8" y="129.3" fill="#d08442" font-weight="normal" xml:space="preserve">      280,044.42 GRT</text>
+        <text class="terminal-text" x="536.8" y="129.3" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  </text>
+        <text class="terminal-text" x="561.2" y="129.3" fill="#c5c8c6" font-weight="normal" xml:space="preserve">                   -</text>
+        <text class="terminal-text" x="0.0" y="185.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  </text>
+        <text class="terminal-text" x="24.4" y="185.4" fill="#c5c8c6" font-weight="bold" xml:space="preserve">Total Value:</text>
+        <text class="terminal-text" x="170.8" y="185.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve"> </text>
+        <text class="terminal-text" x="183.0" y="185.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">824,028.00 GRT</text>
+        <text class="terminal-text" x="0.0" y="209.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  </text>
+        <text class="terminal-text" x="24.4" y="209.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">Withdrawn: 39,000.00 GRT (lifetime)</text>
+        <text class="terminal-text" x="0.0" y="266.0" fill="#398280" font-weight="normal" xml:space="preserve">▸ Active Delegations (1)</text>
+        <text class="terminal-text" x="0.0" y="290.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  </text>
+        <text class="terminal-text" x="24.4" y="290.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">Indexer                                    Staked                   Value                Profit</text>
+        <text class="terminal-text" x="0.0" y="314.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  </text>
+        <text class="terminal-text" x="24.4" y="314.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">ellipfra-indexer.eth        </text>
+        <text class="terminal-text" x="366.0" y="314.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve"> </text>
+        <text class="terminal-text" x="378.2" y="314.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">      543,983.58 GRT</text>
+        <text class="terminal-text" x="622.2" y="314.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve"> </text>
+        <text class="terminal-text" x="634.4" y="314.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">→</text>
+        <text class="terminal-text" x="646.6" y="314.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve"> </text>
+        <text class="terminal-text" x="658.8" y="314.8" fill="#00823d" font-weight="normal" xml:space="preserve">      824,028.00 GRT</text>
+        <text class="terminal-text" x="902.8" y="314.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  </text>
+        <text class="terminal-text" x="927.2" y="314.8" fill="#d08442" font-weight="normal" xml:space="preserve">+280,044.42 GRT (+51%)</text>
+    </g>
+</svg>

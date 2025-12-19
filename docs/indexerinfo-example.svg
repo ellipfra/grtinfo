@@ -36,16 +36,16 @@
         <text class="terminal-text" x="0.0" y="129.3" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  Self stake:      </text>
         <text class="terminal-text" x="231.8" y="129.3" fill="#00823d" font-weight="normal" xml:space="preserve">7,500,862 GRT</text>
         <text class="terminal-text" x="0.0" y="153.7" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  Delegated:       </text>
-        <text class="terminal-text" x="231.8" y="153.7" fill="#398280" font-weight="normal" xml:space="preserve">109,196,582 GRT</text>
+        <text class="terminal-text" x="231.8" y="153.7" fill="#398280" font-weight="normal" xml:space="preserve">109,346,532 GRT</text>
         <text class="terminal-text" x="414.8" y="153.7" fill="#c5c8c6" font-weight="normal" xml:space="preserve"> / 120,013,796 GRT (91%) </text>
         <text class="terminal-text" x="719.8" y="153.7" fill="#c5c8c6" font-weight="normal" xml:space="preserve">(1,911,206 GRT thawing)</text>
         <text class="terminal-text" x="0.0" y="178.1" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  Delegation room: </text>
-        <text class="terminal-text" x="231.8" y="178.1" fill="#00823d" font-weight="normal" xml:space="preserve">12,728,419 GRT</text>
+        <text class="terminal-text" x="231.8" y="178.1" fill="#00823d" font-weight="normal" xml:space="preserve">12,578,469 GRT</text>
         <text class="terminal-text" x="0.0" y="202.5" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  </text>
-        <text class="terminal-text" x="24.4" y="202.5" fill="#c5c8c6" font-weight="bold" xml:space="preserve">Total:           114,356,236 GRT</text>
+        <text class="terminal-text" x="24.4" y="202.5" fill="#c5c8c6" font-weight="bold" xml:space="preserve">Total:           114,506,186 GRT</text>
         <text class="terminal-text" x="0.0" y="226.9" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  Allocated:       115,036,049 GRT</text>
         <text class="terminal-text" x="0.0" y="251.3" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  Remaining:       </text>
-        <text class="terminal-text" x="231.8" y="251.3" fill="#ff2627" font-weight="normal" xml:space="preserve">-679,813 GRT (-0.6%) ⚠ OVER-ALLOCATED</text>
+        <text class="terminal-text" x="231.8" y="251.3" fill="#ff2627" font-weight="normal" xml:space="preserve">-529,863 GRT (-0.5%) ⚠ OVER-ALLOCATED</text>
         <text class="terminal-text" x="0.0" y="307.4" fill="#398280" font-weight="normal" xml:space="preserve">▸ Reward Cuts</text>
         <text class="terminal-text" x="0.0" y="331.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  Indexing rewards: </text>
         <text class="terminal-text" x="244.0" y="331.8" fill="#398280" font-weight="normal" xml:space="preserve">26.5%</text>
@@ -59,13 +59,13 @@
         <text class="terminal-text" x="439.2" y="356.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve"> effective on delegators</text>
         <text class="terminal-text" x="0.0" y="412.4" fill="#398280" font-weight="normal" xml:space="preserve">▸ Instant APR (current allocations)</text>
         <text class="terminal-text" x="0.0" y="436.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  Expected rewards: </text>
-        <text class="terminal-text" x="244.0" y="436.8" fill="#398280" font-weight="normal" xml:space="preserve">38,698,393 GRT/year</text>
-        <text class="terminal-text" x="0.0" y="461.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  Indexer share (26.5%): 10,255,074 GRT/year</text>
-        <text class="terminal-text" x="0.0" y="485.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  Delegator share (73.5%): 28,443,319 GRT/year</text>
+        <text class="terminal-text" x="244.0" y="436.8" fill="#398280" font-weight="normal" xml:space="preserve">38,627,457 GRT/year</text>
+        <text class="terminal-text" x="0.0" y="461.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  Indexer share (26.5%): 10,236,276 GRT/year</text>
+        <text class="terminal-text" x="0.0" y="485.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  Delegator share (73.5%): 28,391,181 GRT/year</text>
         <text class="terminal-text" x="0.0" y="510.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  APR Indexer:    </text>
-        <text class="terminal-text" x="219.6" y="510.0" fill="#00823d" font-weight="normal" xml:space="preserve">136.7%</text>
+        <text class="terminal-text" x="219.6" y="510.0" fill="#00823d" font-weight="normal" xml:space="preserve">136.5%</text>
         <text class="terminal-text" x="0.0" y="534.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  APR Delegators: </text>
-        <text class="terminal-text" x="219.6" y="534.4" fill="#00823d" font-weight="normal" xml:space="preserve">26.05%</text>
+        <text class="terminal-text" x="219.6" y="534.4" fill="#00823d" font-weight="normal" xml:space="preserve">25.96%</text>
         <text class="terminal-text" x="0.0" y="590.5" fill="#398280" font-weight="normal" xml:space="preserve">▸ Allocations</text>
         <text class="terminal-text" x="0.0" y="614.9" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  Active: </text>
         <text class="terminal-text" x="122.0" y="614.9" fill="#00823d" font-weight="normal" xml:space="preserve">873</text>
@@ -74,173 +74,173 @@
         <text class="terminal-text" x="0.0" y="695.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="695.4" fill="#ff2c7a" font-weight="normal" xml:space="preserve">↑</text>
         <text class="terminal-text" x="48.8" y="695.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="695.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 07:23</text>
-        <text class="terminal-text" x="268.4" y="695.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xcdc9228643134261d13b1093c56820c0b1980a42  </text>
-        <text class="terminal-text" x="829.6" y="695.4" fill="#ff2c7a" font-weight="normal" xml:space="preserve">+1k GRT delegated</text>
+        <text class="terminal-text" x="73.2" y="695.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 10:35</text>
+        <text class="terminal-text" x="268.4" y="695.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x2b1a6844814af7ea481243172c582ae4471197e9  </text>
+        <text class="terminal-text" x="829.6" y="695.4" fill="#ff2c7a" font-weight="normal" xml:space="preserve">+150k GRT delegated</text>
         <text class="terminal-text" x="0.0" y="719.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
-        <text class="terminal-text" x="36.6" y="719.8" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
+        <text class="terminal-text" x="36.6" y="719.8" fill="#ff2c7a" font-weight="normal" xml:space="preserve">↑</text>
         <text class="terminal-text" x="48.8" y="719.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="719.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:28</text>
-        <text class="terminal-text" x="268.4" y="719.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xdd48b3e41bc941cb048726ca411c613a52b7e0bb  </text>
-        <text class="terminal-text" x="829.6" y="719.8" fill="#d08442" font-weight="normal" xml:space="preserve">34k GRT thawing, 0 remaining</text>
+        <text class="terminal-text" x="73.2" y="719.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 07:23</text>
+        <text class="terminal-text" x="268.4" y="719.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xcdc9228643134261d13b1093c56820c0b1980a42  </text>
+        <text class="terminal-text" x="829.6" y="719.8" fill="#ff2c7a" font-weight="normal" xml:space="preserve">+1k GRT delegated</text>
         <text class="terminal-text" x="0.0" y="744.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="744.2" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="744.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
         <text class="terminal-text" x="73.2" y="744.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:28</text>
-        <text class="terminal-text" x="268.4" y="744.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x8c447f1f1961af13d65a2227966dd56d75fb838b  </text>
+        <text class="terminal-text" x="268.4" y="744.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xdd48b3e41bc941cb048726ca411c613a52b7e0bb  </text>
         <text class="terminal-text" x="829.6" y="744.2" fill="#d08442" font-weight="normal" xml:space="preserve">34k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="768.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="768.6" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="768.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="768.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:27</text>
-        <text class="terminal-text" x="268.4" y="768.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xf2a8e40305b6a2725cfec8c1bc5fac4659f22a01  </text>
+        <text class="terminal-text" x="73.2" y="768.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:28</text>
+        <text class="terminal-text" x="268.4" y="768.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x8c447f1f1961af13d65a2227966dd56d75fb838b  </text>
         <text class="terminal-text" x="829.6" y="768.6" fill="#d08442" font-weight="normal" xml:space="preserve">34k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="793.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="793.0" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="793.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="793.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:26</text>
-        <text class="terminal-text" x="268.4" y="793.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xbf4c65c29d9b103e8f0fd6b8817cd293b3b4298a  </text>
+        <text class="terminal-text" x="73.2" y="793.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:27</text>
+        <text class="terminal-text" x="268.4" y="793.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xf2a8e40305b6a2725cfec8c1bc5fac4659f22a01  </text>
         <text class="terminal-text" x="829.6" y="793.0" fill="#d08442" font-weight="normal" xml:space="preserve">34k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="817.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="817.4" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="817.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
         <text class="terminal-text" x="73.2" y="817.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:26</text>
-        <text class="terminal-text" x="268.4" y="817.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xcc42893fd11e284d8734eee85915864e86aa0797  </text>
+        <text class="terminal-text" x="268.4" y="817.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xbf4c65c29d9b103e8f0fd6b8817cd293b3b4298a  </text>
         <text class="terminal-text" x="829.6" y="817.4" fill="#d08442" font-weight="normal" xml:space="preserve">34k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="841.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="841.8" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="841.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="841.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:25</text>
-        <text class="terminal-text" x="268.4" y="841.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xc5a80a9f031d111cd7af92746f9a661ae9c89966  </text>
+        <text class="terminal-text" x="73.2" y="841.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:26</text>
+        <text class="terminal-text" x="268.4" y="841.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xcc42893fd11e284d8734eee85915864e86aa0797  </text>
         <text class="terminal-text" x="829.6" y="841.8" fill="#d08442" font-weight="normal" xml:space="preserve">34k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="866.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="866.2" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="866.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="866.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:24</text>
-        <text class="terminal-text" x="268.4" y="866.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xeb8dd6d017fd8895132988de7870b2eec0cafd5b  </text>
+        <text class="terminal-text" x="73.2" y="866.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:25</text>
+        <text class="terminal-text" x="268.4" y="866.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xc5a80a9f031d111cd7af92746f9a661ae9c89966  </text>
         <text class="terminal-text" x="829.6" y="866.2" fill="#d08442" font-weight="normal" xml:space="preserve">34k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="890.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="890.6" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="890.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
         <text class="terminal-text" x="73.2" y="890.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:24</text>
-        <text class="terminal-text" x="268.4" y="890.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xe2338782f2894c63045cc06f0635b9a95d67a857  </text>
+        <text class="terminal-text" x="268.4" y="890.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xeb8dd6d017fd8895132988de7870b2eec0cafd5b  </text>
         <text class="terminal-text" x="829.6" y="890.6" fill="#d08442" font-weight="normal" xml:space="preserve">34k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="915.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="915.0" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="915.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="915.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:23</text>
-        <text class="terminal-text" x="268.4" y="915.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x0dc98d8e3fe15f48dadb16b3a1971f380ce99062  </text>
+        <text class="terminal-text" x="73.2" y="915.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:24</text>
+        <text class="terminal-text" x="268.4" y="915.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xe2338782f2894c63045cc06f0635b9a95d67a857  </text>
         <text class="terminal-text" x="829.6" y="915.0" fill="#d08442" font-weight="normal" xml:space="preserve">34k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="939.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="939.4" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="939.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="939.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:22</text>
-        <text class="terminal-text" x="268.4" y="939.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x7eec2096bc0a940e0eb1786c741b6c74fcd6ba21  </text>
-        <text class="terminal-text" x="829.6" y="939.4" fill="#d08442" font-weight="normal" xml:space="preserve">43k GRT thawing, 0 remaining</text>
+        <text class="terminal-text" x="73.2" y="939.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:23</text>
+        <text class="terminal-text" x="268.4" y="939.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x0dc98d8e3fe15f48dadb16b3a1971f380ce99062  </text>
+        <text class="terminal-text" x="829.6" y="939.4" fill="#d08442" font-weight="normal" xml:space="preserve">34k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="963.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="963.8" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="963.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
         <text class="terminal-text" x="73.2" y="963.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:22</text>
-        <text class="terminal-text" x="268.4" y="963.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xaf062f4a526e9507424650d2cf86a969dd7ad26b  </text>
+        <text class="terminal-text" x="268.4" y="963.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x7eec2096bc0a940e0eb1786c741b6c74fcd6ba21  </text>
         <text class="terminal-text" x="829.6" y="963.8" fill="#d08442" font-weight="normal" xml:space="preserve">43k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="988.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="988.2" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="988.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="988.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:21</text>
-        <text class="terminal-text" x="268.4" y="988.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xa31c0ecab0b8b133c56a321c96481dfe992a6bc3  </text>
+        <text class="terminal-text" x="73.2" y="988.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:22</text>
+        <text class="terminal-text" x="268.4" y="988.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xaf062f4a526e9507424650d2cf86a969dd7ad26b  </text>
         <text class="terminal-text" x="829.6" y="988.2" fill="#d08442" font-weight="normal" xml:space="preserve">43k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="1012.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="1012.6" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="1012.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="1012.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:20</text>
-        <text class="terminal-text" x="268.4" y="1012.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xd2b5c55f6268f0a224246e4f841926f6cf5ed003  </text>
+        <text class="terminal-text" x="73.2" y="1012.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:21</text>
+        <text class="terminal-text" x="268.4" y="1012.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xa31c0ecab0b8b133c56a321c96481dfe992a6bc3  </text>
         <text class="terminal-text" x="829.6" y="1012.6" fill="#d08442" font-weight="normal" xml:space="preserve">43k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="1037.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="1037.0" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="1037.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
         <text class="terminal-text" x="73.2" y="1037.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:20</text>
-        <text class="terminal-text" x="268.4" y="1037.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xb63c89a3a34b688ab7e12e83f0031061896918d3  </text>
+        <text class="terminal-text" x="268.4" y="1037.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xd2b5c55f6268f0a224246e4f841926f6cf5ed003  </text>
         <text class="terminal-text" x="829.6" y="1037.0" fill="#d08442" font-weight="normal" xml:space="preserve">43k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="1061.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="1061.4" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="1061.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="1061.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:19</text>
-        <text class="terminal-text" x="268.4" y="1061.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x8ac4a0d8219eb87b0365978cadb5d7349d346dee  </text>
+        <text class="terminal-text" x="73.2" y="1061.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:20</text>
+        <text class="terminal-text" x="268.4" y="1061.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xb63c89a3a34b688ab7e12e83f0031061896918d3  </text>
         <text class="terminal-text" x="829.6" y="1061.4" fill="#d08442" font-weight="normal" xml:space="preserve">43k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="1085.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="1085.8" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="1085.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="1085.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:18</text>
-        <text class="terminal-text" x="268.4" y="1085.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xcda8b418a64466691a522492945119e5ecf2f177  </text>
+        <text class="terminal-text" x="73.2" y="1085.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:19</text>
+        <text class="terminal-text" x="268.4" y="1085.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x8ac4a0d8219eb87b0365978cadb5d7349d346dee  </text>
         <text class="terminal-text" x="829.6" y="1085.8" fill="#d08442" font-weight="normal" xml:space="preserve">43k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="1110.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="1110.2" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="1110.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="1110.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:17</text>
-        <text class="terminal-text" x="268.4" y="1110.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x1e1938f3092c44f34718ecfa9e4d110772632f9a  </text>
+        <text class="terminal-text" x="73.2" y="1110.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:18</text>
+        <text class="terminal-text" x="268.4" y="1110.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xcda8b418a64466691a522492945119e5ecf2f177  </text>
         <text class="terminal-text" x="829.6" y="1110.2" fill="#d08442" font-weight="normal" xml:space="preserve">43k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="1134.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="1134.6" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="1134.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
         <text class="terminal-text" x="73.2" y="1134.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:17</text>
-        <text class="terminal-text" x="268.4" y="1134.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x2fa03947035b93223df4005709ee6bddf73c0dd1  </text>
+        <text class="terminal-text" x="268.4" y="1134.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x1e1938f3092c44f34718ecfa9e4d110772632f9a  </text>
         <text class="terminal-text" x="829.6" y="1134.6" fill="#d08442" font-weight="normal" xml:space="preserve">43k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="1159.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="1159.0" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="1159.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="1159.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:16</text>
-        <text class="terminal-text" x="268.4" y="1159.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xacbac9736c0c69150f209b3dff756b74489ba56c  </text>
+        <text class="terminal-text" x="73.2" y="1159.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:17</text>
+        <text class="terminal-text" x="268.4" y="1159.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x2fa03947035b93223df4005709ee6bddf73c0dd1  </text>
         <text class="terminal-text" x="829.6" y="1159.0" fill="#d08442" font-weight="normal" xml:space="preserve">43k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="1183.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="1183.4" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="1183.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
         <text class="terminal-text" x="73.2" y="1183.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:16</text>
-        <text class="terminal-text" x="268.4" y="1183.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x7d54bed31986fd001b4acdea7890540a8b87f5b9  </text>
+        <text class="terminal-text" x="268.4" y="1183.4" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xacbac9736c0c69150f209b3dff756b74489ba56c  </text>
         <text class="terminal-text" x="829.6" y="1183.4" fill="#d08442" font-weight="normal" xml:space="preserve">43k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="1207.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="1207.8" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="1207.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="1207.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:14</text>
-        <text class="terminal-text" x="268.4" y="1207.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xc3a62fd4ac3f7606892ea8eb0d827c9dddb96c7b  </text>
-        <text class="terminal-text" x="829.6" y="1207.8" fill="#d08442" font-weight="normal" xml:space="preserve">51k GRT thawing, 0 remaining</text>
+        <text class="terminal-text" x="73.2" y="1207.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:16</text>
+        <text class="terminal-text" x="268.4" y="1207.8" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x7d54bed31986fd001b4acdea7890540a8b87f5b9  </text>
+        <text class="terminal-text" x="829.6" y="1207.8" fill="#d08442" font-weight="normal" xml:space="preserve">43k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="1232.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="1232.2" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="1232.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="1232.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:13</text>
-        <text class="terminal-text" x="268.4" y="1232.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xaa6dcea900a494378201126e046a61cdb5d3340e  </text>
-        <text class="terminal-text" x="829.6" y="1232.2" fill="#d08442" font-weight="normal" xml:space="preserve">43k GRT thawing, 0 remaining</text>
+        <text class="terminal-text" x="73.2" y="1232.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:14</text>
+        <text class="terminal-text" x="268.4" y="1232.2" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xc3a62fd4ac3f7606892ea8eb0d827c9dddb96c7b  </text>
+        <text class="terminal-text" x="829.6" y="1232.2" fill="#d08442" font-weight="normal" xml:space="preserve">51k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="1256.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="1256.6" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="1256.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="1256.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:12</text>
-        <text class="terminal-text" x="268.4" y="1256.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x71a1c67c2ac395524a9ad7cd4f659c3487155478  </text>
-        <text class="terminal-text" x="829.6" y="1256.6" fill="#d08442" font-weight="normal" xml:space="preserve">34k GRT thawing, 0 remaining</text>
+        <text class="terminal-text" x="73.2" y="1256.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:13</text>
+        <text class="terminal-text" x="268.4" y="1256.6" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0xaa6dcea900a494378201126e046a61cdb5d3340e  </text>
+        <text class="terminal-text" x="829.6" y="1256.6" fill="#d08442" font-weight="normal" xml:space="preserve">43k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="1281.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  [</text>
         <text class="terminal-text" x="36.6" y="1281.0" fill="#d08442" font-weight="normal" xml:space="preserve">↓</text>
         <text class="terminal-text" x="48.8" y="1281.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">] </text>
-        <text class="terminal-text" x="73.2" y="1281.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:11</text>
-        <text class="terminal-text" x="268.4" y="1281.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x37c85d0e09824c6e8a877bd0d0e92a704c4c0a28  </text>
+        <text class="terminal-text" x="73.2" y="1281.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">2025-12-19 02:12</text>
+        <text class="terminal-text" x="268.4" y="1281.0" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  0x71a1c67c2ac395524a9ad7cd4f659c3487155478  </text>
         <text class="terminal-text" x="829.6" y="1281.0" fill="#d08442" font-weight="normal" xml:space="preserve">34k GRT thawing, 0 remaining</text>
         <text class="terminal-text" x="0.0" y="1337.1" fill="#398280" font-weight="normal" xml:space="preserve">▸ Top Active Allocations</text>
         <text class="terminal-text" x="0.0" y="1361.5" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  QmasYjypV6nTLp4iNH4Vjf7fksRNxAkAskqDdKf2DCsQkV  2,199,822 GRT  </text>
-        <text class="terminal-text" x="793.0" y="1361.5" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 12h  signal: 38,983</text>
+        <text class="terminal-text" x="793.0" y="1361.5" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 15h  signal: 38,983</text>
         <text class="terminal-text" x="0.0" y="1385.9" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  QmV7EeFsKQDurfwTakfj9K77UuQVQ6cUtnPUQ2wfYcpXUa  1,649,209 GRT  </text>
-        <text class="terminal-text" x="793.0" y="1385.9" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 12h  signal: 29,580</text>
+        <text class="terminal-text" x="793.0" y="1385.9" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 15h  signal: 29,580</text>
         <text class="terminal-text" x="0.0" y="1410.3" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  QmQEYSGSD8t7jTw4gS2dwC4DLvyZceR9fYQ432Ff1hZpCp  1,389,800 GRT  </text>
-        <text class="terminal-text" x="793.0" y="1410.3" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 12h  signal: 52,523</text>
+        <text class="terminal-text" x="793.0" y="1410.3" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 15h  signal: 52,523</text>
         <text class="terminal-text" x="0.0" y="1434.7" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  Qmcdu8weFbmtZpeZaGs8vCpSdWKRPwyvDMX6CftYnW2KZB  1,310,548 GRT  </text>
-        <text class="terminal-text" x="793.0" y="1434.7" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 12h  signal: 23,900</text>
+        <text class="terminal-text" x="793.0" y="1434.7" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 15h  signal: 23,900</text>
         <text class="terminal-text" x="0.0" y="1459.1" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  QmdAaDAUDCypVB85eFUkQMkS5DE1HV4s7WJb6iSiygNvAw  1,294,986 GRT  </text>
-        <text class="terminal-text" x="793.0" y="1459.1" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 12h  signal: 44,628</text>
+        <text class="terminal-text" x="793.0" y="1459.1" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 15h  signal: 44,628</text>
         <text class="terminal-text" x="0.0" y="1483.5" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  QmQjVBdmgZdjHpQsXGSC5uryWLmPkkTAunHN2AnDApZBa3  1,175,756 GRT  </text>
-        <text class="terminal-text" x="793.0" y="1483.5" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 12h  signal: 20,387</text>
+        <text class="terminal-text" x="793.0" y="1483.5" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 15h  signal: 20,387</text>
         <text class="terminal-text" x="0.0" y="1507.9" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  QmaVfEVk82mWRSoXkGetbJo94VrPyjPcahvdiFFKHjXhUu  1,165,491 GRT  </text>
-        <text class="terminal-text" x="793.0" y="1507.9" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 12h  signal: 20,538</text>
+        <text class="terminal-text" x="793.0" y="1507.9" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 15h  signal: 20,538</text>
         <text class="terminal-text" x="0.0" y="1532.3" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  QmXsbEVrYcLYd6AcLJBLazsgW6uxQ5fS9uuHnD2NVGd7Pd  1,155,415 GRT  </text>
-        <text class="terminal-text" x="793.0" y="1532.3" fill="#c5c8c6" font-weight="normal" xml:space="preserve">     19h  signal: 24,427</text>
+        <text class="terminal-text" x="793.0" y="1532.3" fill="#c5c8c6" font-weight="normal" xml:space="preserve">     22h  signal: 24,427</text>
         <text class="terminal-text" x="0.0" y="1556.7" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  QmWEfBuWNqtYwj6XcJyESVVeiN3UmcphMcVjySR1Qqm1yE  1,144,605 GRT  </text>
-        <text class="terminal-text" x="793.0" y="1556.7" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 12h  signal: 19,998</text>
+        <text class="terminal-text" x="793.0" y="1556.7" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 15h  signal: 19,998</text>
         <text class="terminal-text" x="0.0" y="1581.1" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  QmbQBjZ1VUK42k1V6sn6PnP3BZ1vLZhUmzfDpyF9Eiwfgt  1,114,348 GRT  </text>
-        <text class="terminal-text" x="793.0" y="1581.1" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 12h  signal: 19,900</text>
+        <text class="terminal-text" x="793.0" y="1581.1" fill="#c5c8c6" font-weight="normal" xml:space="preserve">  9d 15h  signal: 19,900</text>
     </g>
 </svg>

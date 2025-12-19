@@ -56,7 +56,8 @@ def run_command(cmd, env=None):
         env=env,
         cwd=SCRIPT_DIR
     )
-    return result.stdout + result.stderr
+    # Only return stdout - stderr contains progress messages that shouldn't be in SVG
+    return result.stdout
 
 def clean_osc_sequences(text):
     """Remove only OSC (Operating System Command) sequences that cause XML issues"""
@@ -264,9 +265,17 @@ def main():
         "indexerinfo"
     )
     
+    # Generate delegatorinfo
+    generate_svg(
+        "python3 delegatorinfo.py 0xcd651393fed42023da9680829d1ff68af661f6c8",
+        "delegatorinfo-example.svg",
+        "delegatorinfo"
+    )
+    
     print("\n✅ Documentation generated successfully!")
     print(f"   - {DOCS_DIR / 'subinfo-example.svg'}")
     print(f"   - {DOCS_DIR / 'indexerinfo-example.svg'}")
+    print(f"   - {DOCS_DIR / 'delegatorinfo-example.svg'}")
 
 if __name__ == "__main__":
     main()

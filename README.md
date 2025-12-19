@@ -1,6 +1,6 @@
 # subinfo
 
-CLI tools to analyze TheGraph Network indexers, allocations and curation signals.
+CLI tools to analyze TheGraph Network indexers, delegators, allocations and curation signals.
 
 ## Tools
 
@@ -32,6 +32,18 @@ Display detailed information about any indexer.
 - **Top Allocations**: Largest active allocations with signal info
 - **Flexible Search**: Find indexers by partial ENS name, address, or URL
 - **Clickable Links**: Qm hashes link to The Graph Explorer
+
+### `delegatorinfo` - Delegator Portfolio
+
+Display comprehensive portfolio information for any delegator.
+
+**Features:**
+- **Portfolio Summary**: Staked, accumulated profits, thawing, and total value
+- **Profit Tracking**: Shows accumulated rewards per indexer with profit percentage
+- **Value Calculation**: Current value = staked + accumulated profits
+- **Thawing Status**: Delegations in withdrawal period with remaining time
+- **Withdrawal History**: Lifetime withdrawn tokens
+- **ENS Resolution**: Resolves indexer addresses to ENS names
 
 ## Installation
 
@@ -117,6 +129,26 @@ indexerinfo ellipfra
 **Output:**
 
 ![indexerinfo example](docs/indexerinfo-example.svg)
+
+### delegatorinfo
+
+```bash
+delegatorinfo <address_or_ens>
+```
+
+**Search by:**
+- ETH address: `0xc69de45ec5e4ef1df6bef14229660c9211917d86`
+- ENS name: `vitalik.eth`
+
+**Example:**
+
+```bash
+delegatorinfo 0xc69de45ec5e4ef1df6bef14229660c9211917d86
+```
+
+**Output:**
+
+![delegatorinfo example](docs/delegatorinfo-example.svg)
 
 ## Legend
 
