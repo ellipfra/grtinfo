@@ -480,6 +480,9 @@ def format_tokens(tokens: str) -> str:
             return f"{amount:,.0f} GRT"
         elif amount > 0:
             return f"{amount:.2f} GRT"
+        elif amount < 0:
+            # Negative values (e.g., over-allocated)
+            return f"{amount:,.0f} GRT"
         else:
             return "0 GRT"
     except:
@@ -682,7 +685,8 @@ Examples:
     
     # Use tokenCapacity for total usable stake (excludes thawing delegations)
     total_stake = token_capacity if token_capacity > 0 else (self_stake + delegated)
-    remaining = available_stake if available_stake > 0 else (total_stake - allocated)
+    # Calculate remaining directly (can be negative if over-allocated)
+    remaining = total_stake - allocated
     remaining_pct = (remaining / total_stake * 100) if total_stake > 0 else 0
     
     # Delegation capacity (16x multiplier is the protocol default)
@@ -702,8 +706,12 @@ Examples:
         print(f"  Delegation room: {Colors.BRIGHT_RED}FULL{Colors.RESET}")
     print(f"  {Colors.BOLD}Total:           {format_tokens(str(total_stake))}{Colors.RESET}")
     print(f"  Allocated:       {format_tokens(str(allocated))}")
-    remaining_color = Colors.BRIGHT_GREEN if remaining_pct < 10 else (Colors.BRIGHT_YELLOW if remaining_pct > 30 else Colors.DIM)
-    print(f"  Remaining:       {remaining_color}{format_tokens(str(remaining))} ({remaining_pct:.1f}%){Colors.RESET}")
+    if remaining < 0:
+        # Over-allocated - show warning
+        print(f"  Remaining:       {Colors.BRIGHT_RED}{format_tokens(str(remaining))} ({remaining_pct:.1f}%) ⚠ OVER-ALLOCATED{Colors.RESET}")
+    else:
+        remaining_color = Colors.BRIGHT_GREEN if remaining_pct < 10 else (Colors.BRIGHT_YELLOW if remaining_pct > 30 else Colors.DIM)
+        print(f"  Remaining:       {remaining_color}{format_tokens(str(remaining))} ({remaining_pct:.1f}%){Colors.RESET}")
     
     # Reward cuts
     # Raw cut applies to total rewards, but effective cut on delegators is different
@@ -902,7 +910,9 @@ Examples:
             elif event['type'] == 'undelegate':
                 symbol = f"{Colors.YELLOW}↓{Colors.RESET}"
                 target = event.get('delegator', '?')
-                details = f"{Colors.YELLOW}-{tokens} GRT undelegated{Colors.RESET}"
+                # Note: stakedTokens is the REMAINING amount, not the undelegated amount
+                # So we just show "undelegated" without the amount
+                details = f"{Colors.YELLOW}undelegated{Colors.RESET}"
             else:
                 continue
             
