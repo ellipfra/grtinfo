@@ -12,7 +12,7 @@ Search by:
 
 Configuration:
     - Environment variable: THEGRAPH_NETWORK_SUBGRAPH_URL
-    - Config file: ~/.subinfo/config.json (key "network_subgraph_url")
+    - Config file: ~/.grtinfo/config.json (key "network_subgraph_url")
 """
 
 import sys
@@ -404,7 +404,7 @@ class ENSClient:
     def __init__(self, ens_subgraph_url: str):
         self.ens_subgraph_url = ens_subgraph_url.rstrip('/')
         self._cache = {}
-        self._cache_file = Path.home() / '.subinfo' / 'ens_cache.json'
+        self._cache_file = Path.home() / '.grtinfo' / 'ens_cache.json'
         self._load_cache()
     
     def _load_cache(self):
@@ -566,7 +566,7 @@ def get_network_subgraph_url() -> str:
     if env_url:
         return env_url.rstrip('/')
     
-    config_file = Path.home() / '.subinfo' / 'config.json'
+    config_file = Path.home() / '.grtinfo' / 'config.json'
     if config_file.exists():
         try:
             with open(config_file, 'r') as f:
@@ -588,7 +588,7 @@ def get_ens_subgraph_url() -> str:
     if env_url:
         return env_url.rstrip('/')
     
-    config_file = Path.home() / '.subinfo' / 'config.json'
+    config_file = Path.home() / '.grtinfo' / 'config.json'
     if config_file.exists():
         try:
             with open(config_file, 'r') as f:

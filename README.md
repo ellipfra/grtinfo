@@ -1,4 +1,4 @@
-# subinfo
+# grtinfo
 
 CLI tools to analyze TheGraph Network indexers, delegators, allocations and curation signals.
 
@@ -49,8 +49,8 @@ Display comprehensive portfolio information for any delegator.
 
 ```bash
 # Clone the repository
-git clone https://github.com/ellipfra/subinfo.git
-cd subinfo
+git clone https://github.com/ellipfra/grtinfo.git
+cd grtinfo
 
 # Run the installation script
 ./install.sh
@@ -74,7 +74,7 @@ export ENS_SUBGRAPH_URL="https://your-graph-node/subgraphs/id/QmENSSubgraphHash"
 
 ### Option 2: Configuration File
 
-Edit `~/.subinfo/config.json`:
+Edit `~/.grtinfo/config.json`:
 
 ```json
 {

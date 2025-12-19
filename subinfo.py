@@ -8,7 +8,7 @@ Usage:
 The subgraph_hash is the IPFS hash of the subgraph you want to see information for.
 The TheGraph Network subgraph URL must be configured via:
     - Environment variable: THEGRAPH_NETWORK_SUBGRAPH_URL
-    - Config file: ~/.subinfo/config.json (key "network_subgraph_url")
+    - Config file: ~/.grtinfo/config.json (key "network_subgraph_url")
 
 Example:
     export THEGRAPH_NETWORK_SUBGRAPH_URL="https://your-graph-node/subgraphs/id/QmNetworkSubgraphHash"
@@ -75,7 +75,7 @@ class TheGraphClient:
     def __init__(self, subgraph_url: str):
         # The subgraph URL is directly the GraphQL endpoint
         self.subgraph_url = subgraph_url.rstrip('/')
-        self._cache_file = Path.home() / '.subinfo' / 'network_totals_cache.json'
+        self._cache_file = Path.home() / '.grtinfo' / 'network_totals_cache.json'
         self._cache_duration = 3600  # Cache valid for 1 hour
     
     def is_network_subgraph(self) -> bool:
@@ -960,7 +960,7 @@ class ENSClient:
     def __init__(self, ens_subgraph_url: str):
         self.ens_subgraph_url = ens_subgraph_url.rstrip('/')
         self._cache = {}  # In-memory cache
-        self._cache_file = Path.home() / '.subinfo' / 'ens_cache.json'
+        self._cache_file = Path.home() / '.grtinfo' / 'ens_cache.json'
         self._cache_ttl = 86400  # 24 hours in seconds
         self._load_cache()
     
@@ -1584,7 +1584,7 @@ def get_network_subgraph_url() -> str:
         return env_url.rstrip('/')
     
     # Priority 2: Config file
-    config_file = Path.home() / '.subinfo' / 'config.json'
+    config_file = Path.home() / '.grtinfo' / 'config.json'
     if config_file.exists():
         try:
             with open(config_file, 'r') as f:
@@ -1607,7 +1607,7 @@ def get_network_subgraph_url() -> str:
     # Priority 3: No default - must be configured
     print("Error: No TheGraph Network subgraph URL configured.", file=sys.stderr)
     print("Please set THEGRAPH_NETWORK_SUBGRAPH_URL environment variable", file=sys.stderr)
-    print("or create ~/.subinfo/config.json with 'network_subgraph_url' key.", file=sys.stderr)
+    print("or create ~/.grtinfo/config.json with 'network_subgraph_url' key.", file=sys.stderr)
     sys.exit(1)
 
 
@@ -1619,7 +1619,7 @@ def get_my_indexer_id() -> Optional[str]:
         return env_indexer.lower()
     
     # Priority 2: Config file
-    config_file = Path.home() / '.subinfo' / 'config.json'
+    config_file = Path.home() / '.grtinfo' / 'config.json'
     if config_file.exists():
         try:
             with open(config_file, 'r') as f:
@@ -1644,7 +1644,7 @@ def get_ens_subgraph_url() -> Optional[str]:
         return env_url.rstrip('/')
     
     # Priority 2: Config file
-    config_file = Path.home() / '.subinfo' / 'config.json'
+    config_file = Path.home() / '.grtinfo' / 'config.json'
     if config_file.exists():
         try:
             with open(config_file, 'r') as f:
@@ -1717,12 +1717,12 @@ def main():
 Configuration:
   TheGraph Network subgraph URL can be configured via:
     - Environment variable: THEGRAPH_NETWORK_SUBGRAPH_URL
-    - Config file: ~/.subinfo/config.json (key "network_subgraph_url")
+    - Config file: ~/.grtinfo/config.json (key "network_subgraph_url")
     - Option --url (overrides all)
 
   Your indexer ID (for highlighting) can be configured via:
     - Environment variable: MY_INDEXER_ID
-    - Config file: ~/.subinfo/config.json (key "my_indexer_id")
+    - Config file: ~/.grtinfo/config.json (key "my_indexer_id")
 
 Example:
   export THEGRAPH_NETWORK_SUBGRAPH_URL="https://your-graph-node/subgraphs/id/QmNetworkHash"
@@ -1775,7 +1775,7 @@ Example:
             print("The 'subinfo' tool requires the TheGraph Network subgraph URL")
             print("that contains information about allocations and curation signals.")
             print("\nConfigure the THEGRAPH_NETWORK_SUBGRAPH_URL environment variable")
-            print("or modify ~/.subinfo/config.json with 'network_subgraph_url'")
+            print("or modify ~/.grtinfo/config.json with 'network_subgraph_url'")
             sys.exit(1)
     except Exception as e:
         print(f"Error verifying network subgraph: {e}", file=sys.stderr)

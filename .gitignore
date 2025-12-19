@@ -1,4 +1,4 @@
-subinfo.egg-info/
+grtinfo.egg-info/
 __pycache__/
 .env
 .DS_Store

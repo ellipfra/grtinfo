@@ -12,7 +12,7 @@ Search by:
 
 Configuration:
     - Environment variable: THEGRAPH_NETWORK_SUBGRAPH_URL
-    - Config file: ~/.subinfo/config.json (key "network_subgraph_url")
+    - Config file: ~/.grtinfo/config.json (key "network_subgraph_url")
     - Analytics subgraph: Uses QmWSpwtCkBbciwW3wBf4pG3CXCq4LLzwi8NyqKtQRetdsL
     - RPC URL: Environment variable ARBITRUM_RPC_URL or RPC_URL, or config file key "rpc_url" or "arbitrum_rpc_url"
       Example: {"rpc_url": "http://10.50.10.51:18547"}
@@ -280,7 +280,7 @@ class ENSClient:
     def __init__(self, ens_subgraph_url: str):
         self.ens_subgraph_url = ens_subgraph_url.rstrip('/')
         self._cache = {}
-        self._cache_file = Path.home() / '.subinfo' / 'ens_cache.json'
+        self._cache_file = Path.home() / '.grtinfo' / 'ens_cache.json'
         self._load_cache()
     
     def _load_cache(self):
@@ -514,7 +514,7 @@ def get_network_subgraph_url() -> str:
     if env_url:
         return env_url.rstrip('/')
     
-    config_file = Path.home() / '.subinfo' / 'config.json'
+    config_file = Path.home() / '.grtinfo' / 'config.json'
     if config_file.exists():
         try:
             with open(config_file, 'r') as f:
@@ -536,7 +536,7 @@ def get_ens_subgraph_url() -> str:
     if env_url:
         return env_url.rstrip('/')
     
-    config_file = Path.home() / '.subinfo' / 'config.json'
+    config_file = Path.home() / '.grtinfo' / 'config.json'
     if config_file.exists():
         try:
             with open(config_file, 'r') as f:
@@ -559,7 +559,7 @@ def get_rpc_url() -> str:
         return env_rpc.rstrip('/')
     
     # Priority 2: Config file
-    config_file = Path.home() / '.subinfo' / 'config.json'
+    config_file = Path.home() / '.grtinfo' / 'config.json'
     if config_file.exists():
         try:
             with open(config_file, 'r') as f:
@@ -578,7 +578,7 @@ def get_rpc_url() -> str:
 
 # Cache for accrued rewards (allocation_id -> rewards)
 _accrued_rewards_cache: Dict[str, Optional[float]] = {}
-_cache_file = Path.home() / '.subinfo' / 'accrued_rewards_cache.json'
+_cache_file = Path.home() / '.grtinfo' / 'accrued_rewards_cache.json'
 _cache_ttl = 3600  # 1 hour cache TTL
 
 

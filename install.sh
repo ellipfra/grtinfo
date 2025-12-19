@@ -1,17 +1,17 @@
 #!/bin/bash
-# Installation script for subinfo
+# Installation script for grtinfo
 
 set -e
 
-echo "Installing subinfo..."
+echo "Installing grtinfo..."
 
 # Create config directory if needed
-mkdir -p ~/.subinfo
+mkdir -p ~/.grtinfo
 
 # Copy example config if config doesn't exist
-if [ ! -f ~/.subinfo/config.json ]; then
-    cp config.example.json ~/.subinfo/config.json
-    echo "Configuration file created at ~/.subinfo/config.json"
+if [ ! -f ~/.grtinfo/config.json ]; then
+    cp config.example.json ~/.grtinfo/config.json
+    echo "Configuration file created at ~/.grtinfo/config.json"
     echo "Please edit it with your TheGraph Network subgraph URL."
 fi
 
@@ -33,4 +33,4 @@ echo "  delegatorinfo <address>      - Display delegator portfolio"
 echo ""
 echo "Before using, configure your TheGraph Network subgraph URL:"
 echo "  export THEGRAPH_NETWORK_SUBGRAPH_URL=\"https://your-graph-node/subgraphs/id/QmNetworkHash\""
-echo "  or edit ~/.subinfo/config.json"
+echo "  or edit ~/.grtinfo/config.json"
