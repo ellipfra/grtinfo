@@ -68,6 +68,7 @@ Configure your TheGraph Network subgraph URL before using the tools.
 
 ```bash
 export THEGRAPH_NETWORK_SUBGRAPH_URL="https://your-graph-node/subgraphs/id/QmNetworkSubgraphHash"
+export THEGRAPH_ANALYTICS_SUBGRAPH_URL="https://your-graph-node/subgraphs/id/QmAnalyticsHash"  # Optional
 export MY_INDEXER_ID="0xYourIndexerAddress"  # Optional: for highlighting your allocations
 export ENS_SUBGRAPH_URL="https://your-graph-node/subgraphs/id/QmENSSubgraphHash"  # Optional
 ```
@@ -79,6 +80,7 @@ Edit `~/.grtinfo/config.json`:
 ```json
 {
   "network_subgraph_url": "https://your-graph-node/subgraphs/id/QmNetworkSubgraphHash",
+  "analytics_subgraph_url": "https://your-graph-node/subgraphs/id/QmWSpwtCkBbciwW3wBf4pG3CXCq4LLzwi8NyqKtQRetdsL",
   "my_indexer_id": "0xYourIndexerAddress",
   "ens_subgraph_url": "https://your-graph-node/subgraphs/id/QmENSSubgraphHash"
 }

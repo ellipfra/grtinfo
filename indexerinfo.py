@@ -79,11 +79,12 @@ class TheGraphClient:
     
     def __init__(self, network_subgraph_url: str):
         self.network_subgraph_url = network_subgraph_url.rstrip('/')
+        self._session = requests.Session()
     
     def query(self, query: str, variables: Optional[Dict] = None) -> Dict:
         """Execute a GraphQL query"""
         try:
-            response = requests.post(
+            response = self._session.post(
                 self.network_subgraph_url,
                 json={'query': query, 'variables': variables or {}},
                 headers={'Content-Type': 'application/json'},
@@ -403,6 +404,7 @@ class ENSClient:
     
     def __init__(self, ens_subgraph_url: str):
         self.ens_subgraph_url = ens_subgraph_url.rstrip('/')
+        self._session = requests.Session()
         self._cache = {}
         self._cache_file = Path.home() / '.grtinfo' / 'ens_cache.json'
         self._load_cache()
@@ -423,7 +425,7 @@ class ENSClient:
     
     def query(self, query: str, variables: Optional[Dict] = None) -> Dict:
         try:
-            response = requests.post(
+            response = self._session.post(
                 self.ens_subgraph_url,
                 json={'query': query, 'variables': variables or {}},
                 headers={'Content-Type': 'application/json'},

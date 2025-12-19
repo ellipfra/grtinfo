@@ -13,9 +13,8 @@ Search by:
 Configuration:
     - Environment variable: THEGRAPH_NETWORK_SUBGRAPH_URL
     - Config file: ~/.grtinfo/config.json (key "network_subgraph_url")
-    - Analytics subgraph: Uses QmWSpwtCkBbciwW3wBf4pG3CXCq4LLzwi8NyqKtQRetdsL
-    - RPC URL: Environment variable ARBITRUM_RPC_URL or RPC_URL, or config file key "rpc_url" or "arbitrum_rpc_url"
-      Example: {"rpc_url": "http://10.50.10.51:18547"}
+    - Analytics subgraph: THEGRAPH_ANALYTICS_SUBGRAPH_URL or config "analytics_subgraph_url"
+    - RPC URL: Environment variable ARBITRUM_RPC_URL or RPC_URL, or config key "rpc_url"
 """
 
 import sys
@@ -68,11 +67,12 @@ class TheGraphClient:
     
     def __init__(self, network_subgraph_url: str):
         self.network_subgraph_url = network_subgraph_url.rstrip('/')
+        self._session = requests.Session()
     
     def query(self, query: str, variables: Optional[Dict] = None) -> Dict:
         """Execute a GraphQL query"""
         try:
-            response = requests.post(
+            response = self._session.post(
                 self.network_subgraph_url,
                 json={'query': query, 'variables': variables or {}},
                 headers={'Content-Type': 'application/json'},
@@ -228,11 +228,12 @@ class AnalyticsClient:
     
     def __init__(self, analytics_subgraph_url: str):
         self.analytics_subgraph_url = analytics_subgraph_url.rstrip('/')
+        self._session = requests.Session()
     
     def query(self, query: str, variables: Optional[Dict] = None) -> Dict:
         """Execute a GraphQL query"""
         try:
-            response = requests.post(
+            response = self._session.post(
                 self.analytics_subgraph_url,
                 json={'query': query, 'variables': variables or {}},
                 headers={'Content-Type': 'application/json'},
@@ -279,6 +280,7 @@ class ENSClient:
     
     def __init__(self, ens_subgraph_url: str):
         self.ens_subgraph_url = ens_subgraph_url.rstrip('/')
+        self._session = requests.Session()
         self._cache = {}
         self._cache_file = Path.home() / '.grtinfo' / 'ens_cache.json'
         self._load_cache()
@@ -299,7 +301,7 @@ class ENSClient:
     
     def query(self, query: str, variables: Optional[Dict] = None) -> Dict:
         try:
-            response = requests.post(
+            response = self._session.post(
                 self.ens_subgraph_url,
                 json={'query': query, 'variables': variables or {}},
                 headers={'Content-Type': 'application/json'},
@@ -899,26 +901,18 @@ Examples:
         print("Error: Network subgraph URL not configured.", file=sys.stderr)
         sys.exit(1)
     
-    # Analytics subgraph URL (default)
+    # Analytics subgraph URL
+    # Priority: 1. Environment variable, 2. Config file
     analytics_url = os.environ.get('THEGRAPH_ANALYTICS_SUBGRAPH_URL')
     if not analytics_url:
-        # Use the suggested analytics subgraph IPFS hash
-        # QmWSpwtCkBbciwW3wBf4pG3CXCq4LLzwi8NyqKtQRetdsL
-        # Try to construct URL from network subgraph URL pattern
-        if network_url:
-            # Extract base URL and use analytics subgraph
-            if '/subgraphs/id/' in network_url:
-                base_url = network_url.rsplit('/subgraphs/id/', 1)[0]
-                analytics_url = f"{base_url}/subgraphs/id/QmWSpwtCkBbciwW3wBf4pG3CXCq4LLzwi8NyqKtQRetdsL"
-            elif '/subgraphs/name/' in network_url:
-                base_url = network_url.rsplit('/subgraphs/name/', 1)[0]
-                analytics_url = f"{base_url}/subgraphs/id/QmWSpwtCkBbciwW3wBf4pG3CXCq4LLzwi8NyqKtQRetdsL"
-            else:
-                # Fallback to hosted service
-                analytics_url = "https://api.thegraph.com/subgraphs/id/QmWSpwtCkBbciwW3wBf4pG3CXCq4LLzwi8NyqKtQRetdsL"
-        else:
-            # Fallback to hosted service
-            analytics_url = "https://api.thegraph.com/subgraphs/id/QmWSpwtCkBbciwW3wBf4pG3CXCq4LLzwi8NyqKtQRetdsL"
+        config_file = Path.home() / '.grtinfo' / 'config.json'
+        if config_file.exists():
+            try:
+                with open(config_file) as f:
+                    config = json.load(f)
+                    analytics_url = config.get('analytics_subgraph_url')
+            except Exception:
+                pass
     
     ens_url = get_ens_subgraph_url()
     

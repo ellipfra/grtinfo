@@ -75,6 +75,7 @@ class TheGraphClient:
     def __init__(self, subgraph_url: str):
         # The subgraph URL is directly the GraphQL endpoint
         self.subgraph_url = subgraph_url.rstrip('/')
+        self._session = requests.Session()
         self._cache_file = Path.home() / '.grtinfo' / 'network_totals_cache.json'
         self._cache_duration = 3600  # Cache valid for 1 hour
     
@@ -97,7 +98,7 @@ class TheGraphClient:
     def query(self, query: str, variables: Optional[Dict] = None) -> Dict:
         """Execute a GraphQL query"""
         try:
-            response = requests.post(
+            response = self._session.post(
                 self.subgraph_url,
                 json={'query': query, 'variables': variables or {}},
                 headers={'Content-Type': 'application/json'},
@@ -959,6 +960,7 @@ class ENSClient:
     
     def __init__(self, ens_subgraph_url: str):
         self.ens_subgraph_url = ens_subgraph_url.rstrip('/')
+        self._session = requests.Session()
         self._cache = {}  # In-memory cache
         self._cache_file = Path.home() / '.grtinfo' / 'ens_cache.json'
         self._cache_ttl = 86400  # 24 hours in seconds
@@ -994,7 +996,7 @@ class ENSClient:
     def query(self, query: str, variables: Optional[Dict] = None) -> Dict:
         """Execute a GraphQL query"""
         try:
-            response = requests.post(
+            response = self._session.post(
                 self.ens_subgraph_url,
                 json={'query': query, 'variables': variables or {}},
                 headers={'Content-Type': 'application/json'},

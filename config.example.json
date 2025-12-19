@@ -1,5 +1,6 @@
 {
-  "network_subgraph_url": "https://your-graph-node/subgraphs/id/QmNetworkSubgraphHash",
+  "network_subgraph_url": "https://your-graph-node/subgraphs/id/QmbYLCwrDHRBCnPJ9hTvHLfRpNXbLbzBKks2uvHUSbeWAd",
+  "analytics_subgraph_url": "https://your-graph-node/subgraphs/id/QmWSpwtCkBbciwW3wBf4pG3CXCq4LLzwi8NyqKtQRetdsL",
   "my_indexer_id": "0xYourIndexerAddress",
-  "ens_subgraph_url": "https://your-graph-node/subgraphs/id/QmENSSubgraphHash"
+  "ens_subgraph_url": "https://your-graph-node/subgraphs/id/QmcE8RpWtsiN5hkJKdfCXGfTDoTgPEjMbQwnjLPfThT7kZ"
 }
