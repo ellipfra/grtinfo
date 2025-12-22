@@ -22,3 +22,4 @@ pip install -q rich requests web3
 
 # Execute Python script from docs directory
 python3 docs/generate-docs.py
+
