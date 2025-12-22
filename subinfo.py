@@ -951,12 +951,99 @@ def print_subgraph_metadata(metadata: Optional[Dict]):
         print(f"{Colors.BOLD}Reward Proportion:{Colors.RESET} {Colors.BRIGHT_CYAN}{reward_proportion:.2f}%{Colors.RESET}")
 
 
-def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Optional[str] = None, ens_client: Optional[ENSClient] = None, indexer_urls: Optional[Dict[str, str]] = None, reward_proportion: Optional[float] = None, network_url: Optional[str] = None, subgraph_hash: Optional[str] = None):
-    """Display allocations in a compact format with colors"""
+def fetch_sync_statuses_async(indexer_urls: Dict[str, str], subgraph_hash: str, executor: ThreadPoolExecutor) -> Dict:
+    """Start fetching sync statuses in background, returns a dict with futures"""
+    if not indexer_urls or not subgraph_hash:
+        return {'futures': {}, 'subgraph_hash': subgraph_hash}
+    
+    def fetch_indexer_status(indexer_id: str, url: str) -> Tuple[str, Optional[Dict], Optional[str]]:
+        """Fetch status for a single indexer, returns (indexer_id, status, error)"""
+        if not url:
+            return (indexer_id, None, None)
+        client = IndexerStatusClient(timeout=10)
+        all_statuses = client.get_all_deployments_status(url)
+        if all_statuses:
+            status = all_statuses.get(subgraph_hash)
+            return (indexer_id, status, None)
+        return (indexer_id, None, client.last_error)
+    
+    futures = {
+        executor.submit(fetch_indexer_status, indexer_id, url): indexer_id
+        for indexer_id, url in indexer_urls.items()
+    }
+    return {'futures': futures, 'subgraph_hash': subgraph_hash}
+
+
+def collect_sync_statuses(async_context: Optional[Dict], timeout: float = 5.0) -> Tuple[Dict, Dict]:
+    """Collect sync statuses from async context, with timeout
+    
+    Returns: (sync_statuses dict, sync_errors dict)
+        sync_statuses: indexer_id -> status dict
+        sync_errors: indexer_id -> error string (short reason)
+    """
+    sync_statuses = {}
+    sync_errors = {}
+    
+    if not async_context or not async_context.get('futures'):
+        return sync_statuses, sync_errors
+    
+    futures = async_context['futures']
+    completed_indexers = set()
+    
+    # Wait for futures with timeout - collect what's ready
+    try:
+        for future in as_completed(futures, timeout=timeout):
+            try:
+                indexer_id, status, error = future.result(timeout=0.1)
+                completed_indexers.add(indexer_id)
+                if status:
+                    sync_statuses[indexer_id] = status
+                elif error:
+                    # Shorten common errors
+                    short_error = error
+                    if 'timeout' in error.lower() or 'timed out' in error.lower():
+                        short_error = 'timeout'
+                    elif '404' in error or 'not found' in error.lower():
+                        short_error = 'no endpoint'
+                    elif '403' in error or 'forbidden' in error.lower():
+                        short_error = 'forbidden'
+                    elif 'connection' in error.lower() or 'connect' in error.lower():
+                        short_error = 'unreachable'
+                    elif 'ssl' in error.lower() or 'certificate' in error.lower():
+                        short_error = 'SSL error'
+                    elif len(error) > 15:
+                        short_error = error[:12] + '...'
+                    sync_errors[indexer_id] = short_error
+            except Exception:
+                pass
+    except TimeoutError:
+        # Mark remaining futures as timed out
+        for future, indexer_id in futures.items():
+            if indexer_id not in completed_indexers and indexer_id not in sync_statuses:
+                sync_errors[indexer_id] = 'timeout'
+        log.debug(f"Sync status timeout: collected {len(sync_statuses)} statuses, {len(sync_errors)} errors")
+    
+    return sync_statuses, sync_errors
+
+
+def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Optional[str] = None, ens_client: Optional[ENSClient] = None, indexer_urls: Optional[Dict[str, str]] = None, reward_proportion: Optional[float] = None, network_url: Optional[str] = None, subgraph_hash: Optional[str] = None, sync_statuses: Optional[Dict] = None, sync_errors: Optional[Dict] = None, show_sync_placeholder: bool = False) -> Tuple[List[Dict], int]:
+    """Display allocations in a compact format with colors
+    
+    sync_statuses: pre-collected sync statuses dict (indexer_id -> status), or None to skip sync display
+    sync_errors: dict of indexer_id -> short error reason
+    show_sync_placeholder: if True, show ⏳ placeholder for sync status (to be updated later)
+    
+    Returns: (allocation_lines, lines_after_allocations)
+        allocation_lines: list of allocation info dicts for later sync status updates  
+        lines_after_allocations: count of lines printed after allocation lines (Total, Your Allocation, etc.)
+    """
     print_section(title)
     if not allocations:
         print(f"{Colors.DIM}No allocations found.{Colors.RESET}")
-        return
+        return [], 0
+    
+    # Track lines printed after allocation lines
+    lines_after = 0
     
     # Resolve ENS names in batch
     indexer_addresses = [alloc.get('indexer', {}).get('id', '') for alloc in allocations]
@@ -964,33 +1051,14 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
     if ens_client:
         ens_names = ens_client.resolve_addresses_batch(indexer_addresses)
     
-    # Fetch sync status for each indexer in parallel (if we have their URLs and subgraph hash)
-    sync_statuses = {}  # indexer_id -> status
-    sync_errors = []
-    if indexer_urls and subgraph_hash:
-        def fetch_indexer_status(indexer_id: str, url: str) -> Tuple[str, Optional[Dict], Optional[str]]:
-            """Fetch status for a single indexer, returns (indexer_id, status, error)"""
-            if not url:
-                return (indexer_id, None, None)
-            client = IndexerStatusClient(timeout=10)
-            all_statuses = client.get_all_deployments_status(url)
-            if all_statuses:
-                status = all_statuses.get(subgraph_hash)
-                return (indexer_id, status, None)
-            return (indexer_id, None, client.last_error)
-        
-        # Execute requests in parallel
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = {
-                executor.submit(fetch_indexer_status, indexer_id, url): indexer_id
-                for indexer_id, url in indexer_urls.items()
-            }
-            for future in as_completed(futures):
-                indexer_id, status, error = future.result()
-                if status:
-                    sync_statuses[indexer_id] = status
-                elif error:
-                    sync_errors.append((indexer_id[:10], error))
+    # Use provided sync statuses/errors or empty dicts
+    if sync_statuses is None:
+        sync_statuses = {}
+    if sync_errors is None:
+        sync_errors = {}
+    
+    # Track allocation lines for later updates
+    allocation_lines = []
     
     total = 0
     my_accrued_rewards = None
@@ -1044,9 +1112,19 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
                 duration_seconds = datetime.now().timestamp() - created_ts
                 duration_str = f" ({format_duration(duration_seconds)})"
         
-        # Get sync status for this indexer
+        # Get sync status for this indexer (or show placeholder/error)
         sync_status = sync_statuses.get(indexer_id.lower())
-        sync_indicator = f"  {format_sync_status(sync_status)}" if sync_status else ""
+        sync_error = sync_errors.get(indexer_id.lower())
+        if sync_status:
+            sync_indicator = f"  {format_sync_status(sync_status)}"
+        elif sync_error:
+            sync_indicator = f"  {Colors.DIM}({sync_error}){Colors.RESET}"
+        elif show_sync_placeholder:
+            sync_indicator = f"  {Colors.DIM}⏳{Colors.RESET}"
+        elif indexer_urls and not indexer_urls.get(indexer_id.lower()):
+            sync_indicator = f"  {Colors.DIM}(no URL){Colors.RESET}"
+        else:
+            sync_indicator = ""
         
         # Calculate padding accounting for ANSI codes
         marker_width = get_display_width(marker)
@@ -1058,32 +1136,33 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
         indexer_padding = max(0, 32 - indexer_display_width)
         tokens_padding = max(0, 17 - tokens_str_width)
         
+        # Build the base line (without sync indicator) for later updates
+        base_line = f"  {marker}{' ' * marker_padding}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_GREEN}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  {Colors.DIM}{created}{Colors.RESET}  {status_color}{status}{Colors.RESET}{Colors.DIM}{duration_str}{Colors.RESET}"
+        
         if alloc.get('closedAt'):
             closed = format_timestamp(str(alloc.get('closedAt', '0')))[:16]
             print(f"  {marker}{' ' * marker_padding}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_GREEN}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  {Colors.DIM}{created}{Colors.RESET}  {status_color}{status}{Colors.RESET}")
         else:
-            print(f"  {marker}{' ' * marker_padding}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_GREEN}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  {Colors.DIM}{created}{Colors.RESET}  {status_color}{status}{Colors.RESET}{Colors.DIM}{duration_str}{Colors.RESET}{sync_indicator}")
+            print(f"{base_line}{sync_indicator}")
+            # Track this line for later sync update (only for active allocations)
+            allocation_lines.append({
+                'indexer_id': indexer_id.lower(),
+                'base_line': base_line
+            })
     
     print(f"{Colors.BOLD}Total: {Colors.BRIGHT_GREEN}{format_tokens(str(int(total * 1e18)))}{Colors.RESET}")
-    
-    # Show sync errors summary (unique errors only)
-    if sync_errors:
-        unique_errors = {}
-        for indexer_id, error in sync_errors:
-            if error not in unique_errors:
-                unique_errors[error] = []
-            unique_errors[error].append(indexer_id)
-        for error, indexers in unique_errors.items():
-            if len(indexers) <= 3:
-                print(f"  {Colors.DIM}⚠ Sync status unavailable for {', '.join(indexers)}: {error}{Colors.RESET}")
+    lines_after += 1  # Total line
     
     # Display accrued rewards for my allocation
     if my_indexer_id and my_allocation_id:
         print(f"{Colors.BOLD}Your Allocation:{Colors.RESET}")
+        lines_after += 1
         print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Allocated: {Colors.BRIGHT_GREEN}{my_allocation_amount:,.0f} GRT{Colors.RESET} for {Colors.DIM}{my_allocation_days:.1f} days{Colors.RESET}")
+        lines_after += 1
         if my_accrued_rewards is not None:
             if my_accrued_rewards > 0:
                 print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Accrued rewards: {Colors.BRIGHT_CYAN}{my_accrued_rewards:,.2f} GRT{Colors.RESET}")
+                lines_after += 1
                 
                 # Get indexer reward cut and calculate split
                 reward_cut = get_indexer_reward_cut(my_indexer_id, network_url) if network_url else None
@@ -1091,11 +1170,187 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
                     indexer_share = my_accrued_rewards * reward_cut
                     delegator_share = my_accrued_rewards * (1 - reward_cut)
                     print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Indexer share ({reward_cut*100:.1f}%): {Colors.BRIGHT_GREEN}{indexer_share:,.2f} GRT{Colors.RESET}")
+                    lines_after += 1
                     print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Delegator share ({(1-reward_cut)*100:.1f}%): {Colors.DIM}{delegator_share:,.2f} GRT{Colors.RESET}")
+                    lines_after += 1
             else:
                 print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Accrued rewards: {Colors.DIM}0 GRT (no POI submitted yet){Colors.RESET}")
+                lines_after += 1
         else:
             print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Accrued rewards: {Colors.DIM}(install web3 for exact value){Colors.RESET}")
+            lines_after += 1
+    
+    return allocation_lines, lines_after
+
+
+def update_single_allocation_line(allocation_lines: List[Dict], indexer_id: str, sync_indicator: str, lines_after: int):
+    """Update a single allocation line with sync status
+    
+    allocation_lines: list of dicts with 'indexer_id' and 'base_line'
+    indexer_id: the indexer to update
+    sync_indicator: formatted sync indicator string
+    lines_after: number of lines printed after the allocation section
+    """
+    if not sys.stdout.isatty():
+        return
+    
+    # Find the line index for this indexer
+    line_index = None
+    base_line = None
+    for i, alloc_info in enumerate(allocation_lines):
+        if alloc_info['indexer_id'] == indexer_id:
+            line_index = i
+            base_line = alloc_info['base_line']
+            break
+    
+    if line_index is None:
+        return
+    
+    # Calculate how many lines back from cursor to this allocation line
+    # Cursor is at end, we need to go back: lines_after + (num_allocations - line_index - 1) + 1
+    lines_back = lines_after + (len(allocation_lines) - line_index)
+    
+    # Save cursor, move up, clear line, write, restore cursor
+    sys.stdout.write(f"\033[s")  # Save cursor position
+    sys.stdout.write(f"\033[{lines_back}A")  # Move up
+    sys.stdout.write(f"\033[2K\r{base_line}{sync_indicator}")  # Clear and rewrite
+    sys.stdout.write(f"\033[u")  # Restore cursor position
+    sys.stdout.flush()
+
+
+def stream_sync_status_updates(allocation_lines: List[Dict], async_context: Dict, lines_after: int, timeout: float = 8.0) -> Tuple[Dict, Dict]:
+    """Stream sync status updates as they come in, updating the display progressively
+    
+    Returns: (sync_statuses, sync_errors) for any post-processing
+    """
+    sync_statuses = {}
+    sync_errors = {}
+    
+    if not async_context or not async_context.get('futures') or not allocation_lines:
+        return sync_statuses, sync_errors
+    
+    if not sys.stdout.isatty():
+        # Non-interactive: just collect results
+        return collect_sync_statuses(async_context, timeout)
+    
+    futures = async_context['futures']
+    completed_indexers = set()
+    
+    # Build a map of indexer_id -> line exists
+    tracked_indexers = {info['indexer_id'] for info in allocation_lines}
+    
+    try:
+        for future in as_completed(futures, timeout=timeout):
+            try:
+                indexer_id, status, error = future.result(timeout=0.1)
+                completed_indexers.add(indexer_id)
+                
+                # Only update if this indexer is in our allocation lines
+                if indexer_id not in tracked_indexers:
+                    continue
+                
+                if status:
+                    sync_statuses[indexer_id] = status
+                    sync_indicator = f"  {format_sync_status(status)}"
+                    update_single_allocation_line(allocation_lines, indexer_id, sync_indicator, lines_after)
+                elif error:
+                    # Shorten common errors
+                    short_error = error
+                    if 'timeout' in error.lower() or 'timed out' in error.lower():
+                        short_error = 'timeout'
+                    elif '404' in error or 'not found' in error.lower():
+                        short_error = 'no endpoint'
+                    elif '403' in error or 'forbidden' in error.lower():
+                        short_error = 'forbidden'
+                    elif 'connection' in error.lower() or 'connect' in error.lower():
+                        short_error = 'unreachable'
+                    elif 'ssl' in error.lower() or 'certificate' in error.lower():
+                        short_error = 'SSL error'
+                    elif len(error) > 15:
+                        short_error = error[:12] + '...'
+                    sync_errors[indexer_id] = short_error
+                    sync_indicator = f"  {Colors.DIM}({short_error}){Colors.RESET}"
+                    update_single_allocation_line(allocation_lines, indexer_id, sync_indicator, lines_after)
+            except Exception:
+                pass
+    except TimeoutError:
+        # Mark remaining tracked indexers as timed out
+        for indexer_id in tracked_indexers:
+            if indexer_id not in completed_indexers and indexer_id not in sync_statuses and indexer_id not in sync_errors:
+                sync_errors[indexer_id] = 'timeout'
+                sync_indicator = f"  {Colors.DIM}(timeout){Colors.RESET}"
+                update_single_allocation_line(allocation_lines, indexer_id, sync_indicator, lines_after)
+    
+    return sync_statuses, sync_errors
+
+
+def print_sync_status_summary(allocations: List[Dict], sync_statuses: Dict, ens_client: Optional[ENSClient] = None):
+    """Print sync status summary for allocations"""
+    if not allocations or not sync_statuses:
+        return
+    
+    print_section("Sync Status")
+    
+    # Group by status type
+    synced = []
+    syncing = []
+    failed = []
+    unknown = []
+    
+    for alloc in allocations:
+        indexer = alloc.get('indexer', {})
+        indexer_id = indexer.get('id', '')
+        status = sync_statuses.get(indexer_id.lower())
+        
+        if not status:
+            continue
+        
+        # Get display name
+        ens_name = None
+        if ens_client:
+            ens_name = ens_client.resolve_address(indexer_id)
+        display_name = ens_name if ens_name else f"{indexer_id[:10]}.."
+        
+        health = status.get('health', '')
+        synced_flag = status.get('synced', False)
+        blocks_behind = 0
+        
+        chains = status.get('chains', [])
+        if chains and len(chains) > 0:
+            chain = chains[0]
+            latest = chain.get('latestBlock', {})
+            head = chain.get('chainHeadBlock', {})
+            if latest and head:
+                latest_num = int(latest.get('number', 0))
+                head_num = int(head.get('number', 0))
+                blocks_behind = head_num - latest_num
+        
+        if health == 'failed':
+            failed.append((display_name, status))
+        elif synced_flag and blocks_behind < 100:
+            synced.append((display_name, status))
+        elif blocks_behind > 0:
+            syncing.append((display_name, blocks_behind))
+        else:
+            unknown.append((display_name, status))
+    
+    # Print summary
+    if synced:
+        names = [n for n, _ in synced[:5]]
+        more = f" +{len(synced)-5}" if len(synced) > 5 else ""
+        print(f"  {Colors.BRIGHT_GREEN}✓ Synced:{Colors.RESET} {', '.join(names)}{more}")
+    
+    if syncing:
+        for name, behind in syncing[:5]:
+            behind_str = f"{behind/1000:.0f}k" if behind >= 1000 else str(behind)
+            print(f"  {Colors.BRIGHT_YELLOW}↻ {name}:{Colors.RESET} {Colors.DIM}-{behind_str} blocks{Colors.RESET}")
+        if len(syncing) > 5:
+            print(f"  {Colors.DIM}  ...and {len(syncing)-5} more syncing{Colors.RESET}")
+    
+    if failed:
+        for name, status in failed[:3]:
+            error = status.get('fatalError', {}).get('message', 'Unknown error')[:50]
+            print(f"  {Colors.BRIGHT_RED}✗ {name}:{Colors.RESET} {Colors.DIM}{error}{Colors.RESET}")
 
 
 def print_allocations_timeline(allocations: List[Dict], unallocations: List[Dict], poi_submissions: List[Dict] = None, hours: int = 48, my_indexer_id: Optional[str] = None, ens_client: Optional[ENSClient] = None, indexers_stake_info: Optional[Dict] = None, indexer_urls: Optional[Dict[str, str]] = None):
@@ -1448,6 +1703,10 @@ Example:
         except Exception as e:
             print(f"{Colors.DIM}Warning: Unable to initialize ENS client: {e}{Colors.RESET}\n", file=sys.stderr)
     
+    # Create a shared executor for async operations
+    sync_executor = ThreadPoolExecutor(max_workers=15)
+    sync_context = None
+    
     try:
         # 1. Subgraph metadata
         subgraph_metadata = client.get_subgraph_metadata(args.subgraph_hash)
@@ -1487,16 +1746,57 @@ Example:
         
         indexer_urls = client.get_indexers_urls(list(all_indexer_ids)) if all_indexer_ids else {}
         
+        # 8b. Start async sync status fetching NOW (runs in background while we continue)
+        sync_context = fetch_sync_statuses_async(indexer_urls, args.subgraph_hash, sync_executor)
+        log.debug(f"Started async sync fetch for {len(indexer_urls)} indexers")
+        
         # 9. Get stake info for indexers who unallocated (to detect high unallocated stake)
         unalloc_indexer_ids = [u.get('indexer', {}).get('id', '') for u in unallocations]
         indexers_stake_info = client.get_indexers_stake_info(unalloc_indexer_ids) if unalloc_indexer_ids else {}
         
-        # 10. Display allocations (with reward proportion for accrued rewards estimation)
+        # 10. Display allocations
         reward_proportion = subgraph_metadata.get('rewardProportion') if subgraph_metadata else None
-        print_allocations(current_allocations, "Active Allocations", my_indexer_id, ens_client, indexer_urls, reward_proportion, network_url, args.subgraph_hash)
         
-        # 11. Combined allocations/unallocations/collections timeline
-        print_allocations_timeline(allocation_history, unallocations, poi_submissions, args.hours, my_indexer_id, ens_client, indexers_stake_info, indexer_urls)
+        if sys.stdout.isatty() and sync_context and sync_context.get('futures'):
+            # Interactive mode: show placeholders, then update in-place
+            allocation_lines, lines_after_allocations = print_allocations(
+                current_allocations, "Active Allocations", my_indexer_id, ens_client, 
+                indexer_urls, reward_proportion, network_url, args.subgraph_hash,
+                sync_statuses=None, show_sync_placeholder=True
+            )
+            
+            # 11. Combined allocations/unallocations/collections timeline
+            print_allocations_timeline(allocation_history, unallocations, poi_submissions, args.hours, my_indexer_id, ens_client, indexers_stake_info, indexer_urls)
+            
+            # Count timeline lines (for cursor positioning)
+            timeline_events = len(allocation_history) + len(unallocations) + (len(poi_submissions) if poi_submissions else 0)
+            timeline_lines = 1  # Section header
+            if timeline_events == 0:
+                timeline_lines += 1  # "No events found"
+            else:
+                timeline_lines += timeline_events + 1  # Events + Total line
+            
+            # 12. Stream sync status updates progressively
+            if allocation_lines:
+                total_lines_after = lines_after_allocations + timeline_lines
+                stream_sync_status_updates(allocation_lines, sync_context, total_lines_after, timeout=8.0)
+        else:
+            # Non-interactive mode: wait for sync and display inline
+            sync_statuses = {}
+            sync_errors = {}
+            if sync_context and sync_context.get('futures'):
+                sync_statuses, sync_errors = collect_sync_statuses(sync_context, timeout=10.0)
+            
+            _, _ = print_allocations(
+                current_allocations, "Active Allocations", my_indexer_id, ens_client, 
+                indexer_urls, reward_proportion, network_url, args.subgraph_hash,
+                sync_statuses=sync_statuses, sync_errors=sync_errors, show_sync_placeholder=False
+            )
+            
+            # 11. Combined allocations/unallocations/collections timeline
+            print_allocations_timeline(allocation_history, unallocations, poi_submissions, args.hours, my_indexer_id, ens_client, indexers_stake_info, indexer_urls)
+        
+        print()  # Final newline
         
     except requests.exceptions.RequestException as e:
         print(f"Connection error: {e}", file=sys.stderr)
@@ -1506,6 +1806,9 @@ Example:
         import traceback
         traceback.print_exc()
         sys.exit(1)
+    finally:
+        # Clean up executor
+        sync_executor.shutdown(wait=False)
 
 
 if __name__ == '__main__':
