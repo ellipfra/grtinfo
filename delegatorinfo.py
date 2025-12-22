@@ -35,7 +35,7 @@ from common import (
     format_tokens, format_tokens_short, format_duration, print_section
 )
 from config import get_network_subgraph_url, get_ens_subgraph_url, get_analytics_subgraph_url
-from ens import ENSClient
+from ens_client import ENSClient
 from contracts import REWARDS_MANAGER, STAKING, SUBGRAPH_SERVICE, GRT_DECIMALS
 from logger import setup_logging, get_logger
 

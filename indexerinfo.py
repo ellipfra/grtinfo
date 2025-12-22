@@ -38,9 +38,10 @@ from common import (
     format_timestamp, format_duration, print_section
 )
 from config import get_network_subgraph_url, get_ens_subgraph_url, get_rpc_url
-from ens import ENSClient
+from ens_client import ENSClient
 from sync_status import IndexerStatusClient, format_sync_status as _format_sync_status
 from logger import setup_logging, get_logger
+from rewards import get_rewards_batch, calculate_reward_split
 
 log = get_logger(__name__)
 
@@ -333,6 +334,22 @@ class TheGraphClient:
         result = self.query(query)
         return result.get('allocations', [])
     
+    def get_all_active_allocation_ids(self, indexer_id: str) -> List[str]:
+        """Get all active allocation IDs for an indexer"""
+        query = f"""
+        {{
+            allocations(
+                where: {{ indexer: "{indexer_id.lower()}", status: Active }}
+                first: 1000
+            ) {{
+                id
+            }}
+        }}
+        """
+        result = self.query(query)
+        allocations = result.get('allocations', [])
+        return [a['id'] for a in allocations if a.get('id')]
+    
     def get_delegation_events(self, indexer_id: str, hours: int = 48) -> Tuple[List[Dict], List[Dict]]:
         """Get recent delegation/undelegation events for an indexer"""
         cutoff_time = int((datetime.now() - timedelta(hours=hours)).timestamp())
@@ -487,6 +504,11 @@ Examples:
     )
     parser.add_argument('search_term', help='Search term (ENS name, address, or URL)')
     parser.add_argument('--hours', type=int, default=48, help='Hours of history to show (default: 48)')
+    parser.add_argument(
+        '-r', '--rewards',
+        action='store_true',
+        help='Calculate total accrued rewards from all allocations (requires RPC)'
+    )
     parser.add_argument(
         '-v', '--verbose',
         action='count',
@@ -698,6 +720,44 @@ Examples:
             print(f"  {Colors.DIM}Unable to calculate APR{Colors.RESET}")
     else:
         print(f"  {Colors.DIM}Unable to fetch network data{Colors.RESET}")
+    
+    # Accrued rewards (on-chain) - only if --rewards flag is set
+    if args.rewards:
+        rpc_url = get_rpc_url()
+        if not rpc_url:
+            print_section("Accrued Rewards")
+            print(f"  {Colors.DIM}RPC URL not configured. Set RPC_URL or add rpc_url to config.{Colors.RESET}")
+        elif not HAS_WEB3:
+            print_section("Accrued Rewards")
+            print(f"  {Colors.DIM}web3 library not installed. Run: pip install web3{Colors.RESET}")
+        else:
+            allocation_ids = client.get_all_active_allocation_ids(indexer_id)
+            if allocation_ids:
+                print_section(f"Accrued Rewards ({len(allocation_ids)} allocations)")
+                print(f"  {Colors.DIM}Fetching rewards from smart contract...{Colors.RESET}", end='', flush=True)
+                
+                rewards_map = get_rewards_batch(allocation_ids, rpc_url, max_workers=5)
+                
+                # Calculate totals
+                total_rewards = sum(r for r in rewards_map.values() if r is not None and r > 0)
+                successful = sum(1 for r in rewards_map.values() if r is not None)
+                failed = len(allocation_ids) - successful
+                
+                # Clear the "Fetching..." line
+                print(f"\r{' ' * 60}\r", end='')
+                
+                if total_rewards > 0:
+                    split = calculate_reward_split(total_rewards, raw_reward_cut)
+                    print(f"  Total accrued:     {Colors.BRIGHT_CYAN}{total_rewards:,.0f} GRT{Colors.RESET}")
+                    print(f"  Indexer share:     {Colors.BRIGHT_GREEN}{split['indexer']:,.0f} GRT{Colors.RESET} ({raw_reward_cut*100:.1f}%)")
+                    print(f"  Delegator share:   {Colors.DIM}{split['delegators']:,.0f} GRT{Colors.RESET} ({(1-raw_reward_cut)*100:.1f}%)")
+                    if failed > 0:
+                        print(f"  {Colors.DIM}⚠ {failed} allocations failed to fetch{Colors.RESET}")
+                else:
+                    print(f"  {Colors.DIM}No accrued rewards found (all allocations may be newly opened){Colors.RESET}")
+            else:
+                print_section("Accrued Rewards")
+                print(f"  {Colors.DIM}No active allocations found{Colors.RESET}")
     
     # Allocation stats
     print_section("Allocations")

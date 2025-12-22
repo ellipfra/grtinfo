@@ -192,29 +192,63 @@ def get_legacy_rewards_from_events(
 def get_rewards_batch(
     allocation_ids: List[str],
     rpc_url: str = "https://arb1.arbitrum.io/rpc",
-    max_workers: int = 10
+    max_workers: int = 5
 ) -> Dict[str, Optional[float]]:
     """Get accrued rewards for multiple allocations in parallel
+    
+    Uses a shared Web3 instance to avoid opening too many connections.
     
     Args:
         allocation_ids: List of allocation IDs
         rpc_url: Arbitrum RPC endpoint URL
-        max_workers: Maximum number of parallel requests
+        max_workers: Maximum number of parallel requests (default 5 to avoid file descriptor limits)
     
     Returns:
         Dict mapping allocation_id to rewards (or None if failed)
     """
+    if not HAS_WEB3:
+        return {alloc_id: None for alloc_id in allocation_ids}
+    
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
     
     results = {}
     
-    def fetch_rewards(alloc_id: str) -> tuple:
-        rewards = get_accrued_rewards(alloc_id, rpc_url)
-        return (alloc_id, rewards)
+    # Create a single shared Web3 instance with a session that handles connection pooling
+    w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 30}))
     
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    # Pre-compute the selector once
+    selector = Web3.keccak(text="getRewards(address,address)")[:4].hex()
+    
+    # Thread-local storage not needed since Web3 HTTPProvider handles sessions internally
+    # But we use a lock to avoid potential race conditions
+    lock = threading.Lock()
+    
+    def fetch_rewards_with_shared_w3(alloc_id: str) -> tuple:
+        """Fetch rewards using the shared Web3 instance"""
+        try:
+            for issuer in [STAKING, SUBGRAPH_SERVICE]:
+                try:
+                    calldata = selector + issuer[2:].lower().zfill(64) + alloc_id[2:].lower().zfill(64)
+                    result = w3.eth.call({
+                        "to": Web3.to_checksum_address(REWARDS_MANAGER),
+                        "data": f"0x{calldata}"
+                    })
+                    rewards_wei = int(result.hex(), 16)
+                    if rewards_wei > 0:
+                        return (alloc_id, rewards_wei / (10 ** GRT_DECIMALS))
+                except:
+                    continue
+            return (alloc_id, 0.0)
+        except Exception:
+            return (alloc_id, None)
+    
+    # Limit workers to avoid "too many open files" errors
+    effective_workers = min(max_workers, 5)
+    
+    with ThreadPoolExecutor(max_workers=effective_workers) as executor:
         futures = {
-            executor.submit(fetch_rewards, alloc_id): alloc_id
+            executor.submit(fetch_rewards_with_shared_w3, alloc_id): alloc_id
             for alloc_id in allocation_ids
         }
         

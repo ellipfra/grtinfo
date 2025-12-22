@@ -34,7 +34,7 @@ from common import (
     print_section, strip_ansi, get_display_width
 )
 from config import get_network_subgraph_url, get_ens_subgraph_url, get_my_indexer_id
-from ens import ENSClient
+from ens_client import ENSClient
 from sync_status import IndexerStatusClient, format_sync_status as _format_sync_status
 from rewards import get_accrued_rewards, get_indexer_reward_cut
 from logger import setup_logging, get_logger
