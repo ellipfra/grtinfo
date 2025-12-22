@@ -25,6 +25,12 @@ from typing import Dict, List, Optional, Tuple
 import requests
 from pathlib import Path
 
+try:
+    from web3 import Web3
+    HAS_WEB3 = True
+except ImportError:
+    HAS_WEB3 = False
+
 
 class Colors:
     """ANSI color codes for terminal output"""
@@ -228,7 +234,7 @@ class TheGraphClient:
         active_result = self.query(active_query, {'indexer': indexer_id.lower()})
         active = active_result.get('allocations', [])
         
-        # Recent closed allocations
+        # Recent closed allocations (include isLegacy field)
         closed_query = f"""
         {{
             allocations(
@@ -243,6 +249,7 @@ class TheGraphClient:
                 closedAt
                 status
                 indexingRewards
+                isLegacy
                 subgraphDeployment {{
                     ipfsHash
                     signalledTokens
@@ -604,6 +611,116 @@ def get_ens_subgraph_url() -> str:
     return None
 
 
+def get_rpc_url() -> Optional[str]:
+    """Get RPC URL from environment variable or config"""
+    env_url = os.environ.get('RPC_URL')
+    if env_url:
+        return env_url.rstrip('/')
+    
+    config_file = Path.home() / '.grtinfo' / 'config.json'
+    if config_file.exists():
+        try:
+            with open(config_file, 'r') as f:
+                config = json.loads(f.read())
+                url = config.get('rpc_url')
+                if url:
+                    return url.rstrip('/')
+        except:
+            pass
+    
+    return None
+
+
+class LegacyRewardsClient:
+    """Client to fetch legacy allocation rewards from on-chain events"""
+    
+    # HorizonRewardAssigned event signature
+    # event HorizonRewardAssigned(address indexed indexer, address indexed allocationID, uint256 amount)
+    HORIZON_REWARD_TOPIC = "0xa111914d7f2ea8beca61d12f1a1f38c5533de5f1823c3936422df4404ac2ec68"
+    # RewardsManager contract on Arbitrum One
+    REWARDS_MANAGER = "0x971B9d3d0Ae3ECa029CAB5eA1fB0F72c85e6a525"
+    
+    def __init__(self, rpc_url: str):
+        if not HAS_WEB3:
+            raise ImportError("web3 library is required for legacy rewards fetching")
+        self.w3 = Web3(Web3.HTTPProvider(rpc_url))
+    
+    def get_rewards_for_allocation(self, allocation_id: str, from_block: int, to_block: int) -> int:
+        """Get total rewards for a specific allocation from HorizonRewardAssigned events"""
+        try:
+            # Pad allocation ID to 32 bytes for topic filter
+            alloc_topic = "0x" + allocation_id.lower()[2:].zfill(64)
+            
+            logs = self.w3.eth.get_logs({
+                "address": self.REWARDS_MANAGER,
+                "topics": [
+                    self.HORIZON_REWARD_TOPIC,
+                    None,  # indexer (any)
+                    alloc_topic  # allocation ID
+                ],
+                "fromBlock": from_block,
+                "toBlock": to_block
+            })
+            
+            total_rewards = 0
+            for log in logs:
+                # Data contains the amount (uint256)
+                amount = int(log.data.hex(), 16)
+                total_rewards += amount
+            
+            return total_rewards
+        except Exception as e:
+            return 0
+    
+    def get_rewards_for_allocations(self, allocations: List[Dict], indexer_id: str) -> Dict[str, int]:
+        """Get rewards for multiple allocations efficiently using batch requests"""
+        if not allocations:
+            return {}
+        
+        rewards_map = {}
+        
+        # Get current block for the "to" block
+        try:
+            current_block = self.w3.eth.block_number
+        except:
+            return rewards_map
+        
+        # Pad indexer ID for topic filter
+        indexer_topic = "0x" + indexer_id.lower()[2:].zfill(64)
+        
+        # Find the earliest creation block among allocations
+        earliest_created = min(int(a.get('createdAt', 0)) for a in allocations)
+        # Convert timestamp to approximate block (Arbitrum: ~0.25s per block)
+        # Go back a bit further to be safe
+        from_block = max(0, current_block - int((time.time() - earliest_created) / 0.25) - 10000)
+        
+        try:
+            # Get all HorizonRewardAssigned events for this indexer
+            logs = self.w3.eth.get_logs({
+                "address": self.REWARDS_MANAGER,
+                "topics": [
+                    self.HORIZON_REWARD_TOPIC,
+                    indexer_topic  # indexer
+                ],
+                "fromBlock": from_block,
+                "toBlock": current_block
+            })
+            
+            # Parse logs and map to allocations
+            for log in logs:
+                allocation_id = "0x" + log.topics[2].hex()[-40:]
+                amount = int(log.data.hex(), 16)
+                
+                if allocation_id not in rewards_map:
+                    rewards_map[allocation_id] = 0
+                rewards_map[allocation_id] += amount
+            
+        except Exception as e:
+            pass
+        
+        return rewards_map
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Display indexer information from The Graph Network',
@@ -831,6 +948,18 @@ Examples:
     poi_submissions = client.get_indexer_poi_submissions(indexer_id, args.hours)
     recent_delegations, recent_undelegations = client.get_delegation_events(indexer_id, args.hours)
     
+    # Enrich legacy allocation rewards from on-chain events if RPC is available
+    legacy_rewards_map = {}
+    rpc_url = get_rpc_url()
+    if rpc_url and HAS_WEB3:
+        legacy_allocs = [a for a in closed_allocs if a.get('isLegacy') and int(a.get('indexingRewards', '0')) == 0]
+        if legacy_allocs:
+            try:
+                legacy_client = LegacyRewardsClient(rpc_url)
+                legacy_rewards_map = legacy_client.get_rewards_for_allocations(legacy_allocs, indexer_id)
+            except Exception:
+                pass
+    
     # Build timeline
     events = []
     
@@ -852,13 +981,19 @@ Examples:
     # Closed allocations
     for alloc in closed_allocs:
         deployment = alloc.get('subgraphDeployment', {})
+        # Use on-chain rewards for legacy allocations if available
+        rewards = int(alloc.get('indexingRewards', '0'))
+        alloc_id = alloc.get('id', '').lower()
+        if alloc.get('isLegacy') and rewards == 0 and alloc_id in legacy_rewards_map:
+            rewards = legacy_rewards_map[alloc_id]
         events.append({
             'type': 'unallocate',
             'timestamp': int(alloc.get('closedAt', 0)),
             'tokens': alloc.get('allocatedTokens', '0'),
-            'rewards': int(alloc.get('indexingRewards', '0')),
+            'rewards': rewards,
             'subgraph': deployment.get('ipfsHash', '?'),
-            'subgraph_id': get_subgraph_id_from_deployment(deployment)
+            'subgraph_id': get_subgraph_id_from_deployment(deployment),
+            'is_legacy': alloc.get('isLegacy', False)
         })
     
     # POI submissions (collections)
@@ -926,7 +1061,9 @@ Examples:
                 subgraph_id = event.get('subgraph_id')
                 target = format_deployment_link(subgraph, subgraph_id) if subgraph != '?' else subgraph
                 rewards = event.get('rewards', 0) / 1e18
-                rewards_str = f" → {rewards:,.0f} GRT" if rewards > 0 else ""
+                is_legacy = event.get('is_legacy', False)
+                legacy_marker = f" {Colors.DIM}(legacy){Colors.RESET}" if is_legacy else ""
+                rewards_str = f" → {rewards:,.0f} GRT{legacy_marker}" if rewards > 0 else ""
                 details = f"{tokens} GRT{rewards_str}"
             elif event['type'] == 'collect':
                 symbol = f"{Colors.BRIGHT_CYAN}${Colors.RESET}"
