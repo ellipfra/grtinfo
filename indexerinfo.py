@@ -31,45 +31,15 @@ try:
 except ImportError:
     HAS_WEB3 = False
 
-
-class Colors:
-    """ANSI color codes for terminal output"""
-    RESET = '\033[0m'
-    BOLD = '\033[1m'
-    DIM = '\033[2m'
-    
-    # Standard colors
-    RED = '\033[31m'
-    GREEN = '\033[32m'
-    YELLOW = '\033[33m'
-    BLUE = '\033[34m'
-    MAGENTA = '\033[35m'
-    CYAN = '\033[36m'
-    WHITE = '\033[37m'
-    
-    # Bright colors
-    BRIGHT_RED = '\033[91m'
-    BRIGHT_GREEN = '\033[92m'
-    BRIGHT_YELLOW = '\033[93m'
-    BRIGHT_BLUE = '\033[94m'
-    BRIGHT_MAGENTA = '\033[95m'
-    BRIGHT_CYAN = '\033[96m'
-
-
-def terminal_link(url: str, text: str) -> str:
-    """Create a clickable terminal hyperlink (OSC 8)
-    Can be disabled by setting NO_HYPERLINKS=1 environment variable"""
-    if os.environ.get('NO_HYPERLINKS') == '1':
-        return text
-    return f'\033]8;;{url}\033\\{text}\033]8;;\033\\'
-
-
-def format_deployment_link(ipfs_hash: str, subgraph_id: str = None) -> str:
-    """Format IPFS hash as a clickable link to The Graph Explorer"""
-    if subgraph_id:
-        url = f"https://thegraph.com/explorer/subgraphs/{subgraph_id}?view=Query&chain=arbitrum-one"
-        return terminal_link(url, ipfs_hash)
-    return ipfs_hash
+# Import shared modules
+from common import (
+    Colors, terminal_link, format_deployment_link,
+    format_tokens, format_tokens_short, format_percentage,
+    format_timestamp, format_duration, print_section
+)
+from config import get_network_subgraph_url, get_ens_subgraph_url, get_rpc_url
+from ens import ENSClient
+from sync_status import IndexerStatusClient, format_sync_status as _format_sync_status
 
 
 def get_subgraph_id_from_deployment(deployment: Dict) -> Optional[str]:
@@ -406,231 +376,6 @@ class TheGraphClient:
         return delegations, undelegations
 
 
-class ENSClient:
-    """Client to resolve ENS names"""
-    
-    def __init__(self, ens_subgraph_url: str):
-        self.ens_subgraph_url = ens_subgraph_url.rstrip('/')
-        self._session = requests.Session()
-        self._cache = {}
-        self._cache_file = Path.home() / '.grtinfo' / 'ens_cache.json'
-        self._load_cache()
-    
-    def _load_cache(self):
-        try:
-            if self._cache_file.exists():
-                with open(self._cache_file, 'r') as f:
-                    cache_data = json.load(f)
-                    now = time.time()
-                    for addr, entry in cache_data.items():
-                        if isinstance(entry, dict) and 'name' in entry:
-                            self._cache[addr] = entry
-                        elif isinstance(entry, str) or entry is None:
-                            self._cache[addr] = {'name': entry, 'timestamp': now}
-        except:
-            pass
-    
-    def query(self, query: str, variables: Optional[Dict] = None) -> Dict:
-        try:
-            response = self._session.post(
-                self.ens_subgraph_url,
-                json={'query': query, 'variables': variables or {}},
-                headers={'Content-Type': 'application/json'},
-                timeout=10
-            )
-            response.raise_for_status()
-            data = response.json()
-            if 'errors' in data:
-                return {}
-            return data.get('data', {})
-        except:
-            return {}
-    
-    def resolve_address(self, address: str) -> Optional[str]:
-        if not address or address == 'Unknown':
-            return None
-        
-        address_lower = address.lower()
-        if address_lower in self._cache:
-            entry = self._cache[address_lower]
-            if isinstance(entry, dict):
-                return entry.get('name')
-            return entry
-        
-        query = """
-        query ResolveAddress($address: String!) {
-            domains(
-                where: { resolvedAddress: $address }
-                first: 1
-                orderBy: createdAt
-                orderDirection: desc
-            ) {
-                name
-            }
-        }
-        """
-        
-        try:
-            result = self.query(query, {'address': address_lower})
-            domains = result.get('domains', [])
-            if domains:
-                name = domains[0].get('name')
-                if name:
-                    self._cache[address_lower] = {'name': name, 'timestamp': time.time()}
-                    return name
-        except:
-            pass
-        
-        self._cache[address_lower] = {'name': None, 'timestamp': time.time()}
-        return None
-    
-    def search_by_ens(self, partial_name: str) -> List[Dict]:
-        """Search for ENS names containing the partial name"""
-        query = """
-        query SearchENS($search: String!) {
-            domains(
-                where: { name_contains: $search }
-                first: 20
-                orderBy: createdAt
-                orderDirection: desc
-            ) {
-                name
-                resolvedAddress { id }
-            }
-        }
-        """
-        result = self.query(query, {'search': partial_name.lower()})
-        return result.get('domains', [])
-
-
-def format_tokens(tokens: str) -> str:
-    """Format token amount with thousands separator"""
-    try:
-        amount = float(tokens) / 1e18
-        if amount >= 1:
-            return f"{amount:,.0f} GRT"
-        elif amount > 0:
-            return f"{amount:.2f} GRT"
-        elif amount < 0:
-            # Negative values (e.g., over-allocated)
-            return f"{amount:,.0f} GRT"
-        else:
-            return "0 GRT"
-    except:
-        return "0 GRT"
-
-
-def format_tokens_short(tokens: str) -> str:
-    """Format token amount in short form (k, M)"""
-    try:
-        amount = float(tokens) / 1e18
-        if amount >= 1_000_000:
-            return f"{amount/1_000_000:.1f}M"
-        elif amount >= 1_000:
-            return f"{amount/1_000:.0f}k"
-        elif amount >= 1:
-            return f"{amount:,.0f}"
-        else:
-            return f"{amount:.2f}"
-    except:
-        return "0"
-
-
-def format_percentage(value: float) -> str:
-    """Format a PPM value as percentage"""
-    return f"{value / 10000:.2f}%"
-
-
-def format_timestamp(ts: str) -> str:
-    try:
-        dt = datetime.fromtimestamp(int(ts))
-        return dt.strftime('%Y-%m-%d %H:%M')
-    except:
-        return 'Unknown'
-
-
-def format_duration(seconds: int) -> str:
-    """Format duration in human readable format"""
-    if seconds < 0:
-        return "expired"
-    days = seconds // 86400
-    hours = (seconds % 86400) // 3600
-    if days > 0:
-        return f"{days}d {hours}h"
-    elif hours > 0:
-        return f"{hours}h"
-    else:
-        minutes = (seconds % 3600) // 60
-        return f"{minutes}m"
-
-
-def print_section(title: str):
-    """Display a compact section title"""
-    print(f"\n{Colors.CYAN}▸ {title}{Colors.RESET}")
-
-
-def get_network_subgraph_url() -> str:
-    """Get network subgraph URL from environment variable or config"""
-    env_url = os.environ.get('THEGRAPH_NETWORK_SUBGRAPH_URL')
-    if env_url:
-        return env_url.rstrip('/')
-    
-    config_file = Path.home() / '.grtinfo' / 'config.json'
-    if config_file.exists():
-        try:
-            with open(config_file, 'r') as f:
-                content = f.read().strip()
-                if content:
-                    config = json.loads(content)
-                    url = config.get('network_subgraph_url')
-                    if url:
-                        return url.rstrip('/')
-        except:
-            pass
-    
-    return None
-
-
-def get_ens_subgraph_url() -> str:
-    """Get ENS subgraph URL"""
-    env_url = os.environ.get('ENS_SUBGRAPH_URL')
-    if env_url:
-        return env_url.rstrip('/')
-    
-    config_file = Path.home() / '.grtinfo' / 'config.json'
-    if config_file.exists():
-        try:
-            with open(config_file, 'r') as f:
-                config = json.loads(f.read())
-                url = config.get('ens_subgraph_url')
-                if url:
-                    return url.rstrip('/')
-        except:
-            pass
-    
-    return None
-
-
-def get_rpc_url() -> Optional[str]:
-    """Get RPC URL from environment variable or config"""
-    env_url = os.environ.get('RPC_URL')
-    if env_url:
-        return env_url.rstrip('/')
-    
-    config_file = Path.home() / '.grtinfo' / 'config.json'
-    if config_file.exists():
-        try:
-            with open(config_file, 'r') as f:
-                config = json.loads(f.read())
-                url = config.get('rpc_url')
-                if url:
-                    return url.rstrip('/')
-        except:
-            pass
-    
-    return None
-
-
 class LegacyRewardsClient:
     """Client to fetch legacy allocation rewards from on-chain events"""
     
@@ -719,10 +464,6 @@ class LegacyRewardsClient:
             pass
         
         return rewards_map
-
-
-# Import shared sync status functionality
-from sync_status import IndexerStatusClient, format_sync_status as _format_sync_status
 
 
 def format_sync_status(status: Optional[Dict]) -> str:

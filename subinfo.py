@@ -26,49 +26,16 @@ from typing import Dict, List, Optional, Tuple
 import requests
 from pathlib import Path
 
-# Import shared sync status functionality
-from sync_status import IndexerStatusClient, format_sync_status as _format_sync_status, format_sync_status_detailed
-
-def terminal_link(url: str, text: str) -> str:
-    """Create a clickable terminal hyperlink (OSC 8)
-    Can be disabled by setting NO_HYPERLINKS=1 environment variable"""
-    if os.environ.get('NO_HYPERLINKS') == '1':
-        return text
-    return f'\033]8;;{url}\033\\{text}\033]8;;\033\\'
-
-
-def format_deployment_link(ipfs_hash: str, subgraph_id: str = None) -> str:
-    """Format IPFS hash as a clickable link to The Graph Explorer"""
-    if subgraph_id:
-        url = f"https://thegraph.com/explorer/subgraphs/{subgraph_id}?view=Query&chain=arbitrum-one"
-        return terminal_link(url, ipfs_hash)
-    return ipfs_hash
-
-
-# ANSI color codes
-class Colors:
-    RESET = '\033[0m'
-    BOLD = '\033[1m'
-    
-    # Base colors
-    GREEN = '\033[32m'
-    RED = '\033[31m'
-    YELLOW = '\033[33m'
-    BLUE = '\033[34m'
-    MAGENTA = '\033[35m'
-    CYAN = '\033[36m'
-    WHITE = '\033[37m'
-    
-    # Bright colors
-    BRIGHT_GREEN = '\033[92m'
-    BRIGHT_RED = '\033[91m'
-    BRIGHT_YELLOW = '\033[93m'
-    BRIGHT_BLUE = '\033[94m'
-    BRIGHT_MAGENTA = '\033[95m'
-    BRIGHT_CYAN = '\033[96m'
-    
-    # Styles
-    DIM = '\033[2m'
+# Import shared modules
+from common import (
+    Colors, terminal_link, format_deployment_link,
+    format_tokens, format_timestamp, format_duration,
+    print_section, strip_ansi, get_display_width
+)
+from config import get_network_subgraph_url, get_ens_subgraph_url, get_my_indexer_id
+from ens import ENSClient
+from sync_status import IndexerStatusClient, format_sync_status as _format_sync_status
+from rewards import get_accrued_rewards, get_indexer_reward_cut
     
 
 
@@ -958,209 +925,6 @@ class TheGraphClient:
                 return []
 
 
-class ENSClient:
-    """Client to query ENS subgraph and resolve addresses to names"""
-    
-    def __init__(self, ens_subgraph_url: str):
-        self.ens_subgraph_url = ens_subgraph_url.rstrip('/')
-        self._session = requests.Session()
-        self._cache = {}  # In-memory cache
-        self._cache_file = Path.home() / '.grtinfo' / 'ens_cache.json'
-        self._cache_ttl = 86400  # 24 hours in seconds
-        self._load_cache()
-    
-    def _load_cache(self):
-        """Load ENS cache from disk"""
-        try:
-            if self._cache_file.exists():
-                with open(self._cache_file, 'r') as f:
-                    cache_data = json.load(f)
-                    now = time.time()
-                    # Filter out expired entries
-                    for addr, entry in cache_data.items():
-                        if isinstance(entry, dict) and 'name' in entry and 'timestamp' in entry:
-                            if now - entry['timestamp'] < self._cache_ttl:
-                                self._cache[addr] = entry
-                        elif isinstance(entry, str):
-                            # Old format without timestamp - keep but will be refreshed
-                            self._cache[addr] = {'name': entry, 'timestamp': now - self._cache_ttl + 3600}
-        except:
-            pass
-    
-    def _save_cache(self):
-        """Save ENS cache to disk"""
-        try:
-            self._cache_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._cache_file, 'w') as f:
-                json.dump(self._cache, f, indent=2)
-        except:
-            pass
-    
-    def query(self, query: str, variables: Optional[Dict] = None) -> Dict:
-        """Execute a GraphQL query"""
-        try:
-            response = self._session.post(
-                self.ens_subgraph_url,
-                json={'query': query, 'variables': variables or {}},
-                headers={'Content-Type': 'application/json'},
-                timeout=10
-            )
-            response.raise_for_status()
-            data = response.json()
-            if 'errors' in data:
-                return {}
-            return data.get('data', {})
-        except:
-            return {}
-    
-    def resolve_address(self, address: str) -> Optional[str]:
-        """Resolve an Ethereum address to an ENS name"""
-        if not address or address == 'Unknown':
-            return None
-        
-        # Check cache
-        address_lower = address.lower()
-        if address_lower in self._cache:
-            entry = self._cache[address_lower]
-            if isinstance(entry, dict):
-                return entry.get('name')
-            return entry  # Old format compatibility
-        
-        # Query to find ENS name
-        query = """
-        query ResolveAddress($address: String!) {
-            domains(
-                where: { resolvedAddress: $address }
-                first: 1
-                orderBy: createdAt
-                orderDirection: desc
-            ) {
-                name
-            }
-        }
-        """
-        
-        try:
-            result = self.query(query, {'address': address_lower})
-            domains = result.get('domains', [])
-            if domains:
-                name = domains[0].get('name')
-                if name:
-                    self._cache[address_lower] = {'name': name, 'timestamp': time.time()}
-                    self._save_cache()
-                    return name
-        except:
-            pass
-        
-        # If not found, put None in cache to avoid retrying
-        self._cache[address_lower] = {'name': None, 'timestamp': time.time()}
-        self._save_cache()
-        return None
-    
-    def resolve_addresses_batch(self, addresses: List[str]) -> Dict[str, Optional[str]]:
-        """Resolve multiple addresses in a single query"""
-        results = {}
-        addresses_lower = [addr.lower() for addr in addresses if addr and addr != 'Unknown']
-        
-        if not addresses_lower:
-            return results
-        
-        # Check cache first
-        to_query = []
-        for addr in addresses_lower:
-            if addr in self._cache:
-                entry = self._cache[addr]
-                if isinstance(entry, dict):
-                    results[addr] = entry.get('name')
-                else:
-                    results[addr] = entry
-            else:
-                to_query.append(addr)
-        
-        # If all addresses were cached, return early
-        if not to_query:
-            return results
-        
-        # Batch query only for uncached addresses
-        query = """
-        query ResolveAddresses($addresses: [String!]!) {
-            domains(
-                where: { resolvedAddress_in: $addresses }
-                first: 100
-            ) {
-                name
-                resolvedAddress {
-                    id
-                }
-            }
-        }
-        """
-        
-        try:
-            result = self.query(query, {'addresses': to_query})
-            domains = result.get('domains', [])
-            for domain in domains:
-                addr = domain.get('resolvedAddress', {}).get('id', '').lower()
-                name = domain.get('name')
-                if addr and name:
-                    results[addr] = name
-                    self._cache[addr] = {'name': name, 'timestamp': time.time()}
-            
-            # Put None for addresses not found
-            for addr in to_query:
-                if addr not in results:
-                    results[addr] = None
-                    self._cache[addr] = {'name': None, 'timestamp': time.time()}
-            
-            self._save_cache()
-        except:
-            pass
-        
-        return results
-
-
-def format_timestamp(ts: str) -> str:
-    """Format a Unix timestamp to a readable date"""
-    try:
-        dt = datetime.fromtimestamp(int(ts))
-        return dt.strftime('%Y-%m-%d %H:%M:%S')
-    except:
-        return ts
-
-
-def format_tokens(tokens: str) -> str:
-    """Format tokens to a readable format"""
-    try:
-        amount = float(tokens) / 1e18  # GRT has 18 decimals
-        return f"{amount:,.2f} GRT"
-    except:
-        return tokens
-
-
-def format_duration(seconds: float) -> str:
-    """Format duration in seconds to a human-readable format"""
-    if seconds < 60:
-        return f"{int(seconds)}s"
-    elif seconds < 3600:
-        minutes = int(seconds / 60)
-        return f"{minutes}m"
-    elif seconds < 86400:
-        hours = int(seconds / 3600)
-        minutes = int((seconds % 3600) / 60)
-        if minutes > 0:
-            return f"{hours}h {minutes}m"
-        return f"{hours}h"
-    else:
-        days = int(seconds / 86400)
-        hours = int((seconds % 86400) / 3600)
-        if hours > 0:
-            return f"{days}d {hours}h"
-        return f"{days}d"
-
-
-def print_section(title: str):
-    """Display a compact section title with color"""
-    print(f"\n{Colors.CYAN}▸ {title}{Colors.RESET}")
 
 
 def print_subgraph_metadata(metadata: Optional[Dict]):
@@ -1181,79 +945,6 @@ def print_subgraph_metadata(metadata: Optional[Dict]):
     reward_proportion = metadata.get('rewardProportion')
     if reward_proportion is not None:
         print(f"{Colors.BOLD}Reward Proportion:{Colors.RESET} {Colors.BRIGHT_CYAN}{reward_proportion:.2f}%{Colors.RESET}")
-
-
-def get_accrued_rewards_from_contract(allocation_id: str, rpc_url: str = "https://arb1.arbitrum.io/rpc") -> Optional[Tuple[float, float, float]]:
-    """
-    Get exact accrued rewards from the RewardsManager smart contract.
-    
-    Calls getRewards(address _rewardsIssuer, address _allocationID) on RewardsManager.
-    Tries both Staking (legacy) and SubgraphService (new Horizon) as rewards issuers.
-    
-    Returns: (total_rewards, indexer_rewards, delegator_rewards) or None if failed
-    """
-    try:
-        from web3 import Web3
-        
-        w3 = Web3(Web3.HTTPProvider(rpc_url))
-        
-        # Contract addresses on Arbitrum One
-        REWARDS_MANAGER = "0x971b9d3d0ae3eca029cab5ea1fb0f72c85e6a525"
-        STAKING = "0x00669a4cf01450b64e8a2a20e9b1fcb71e61ef03"
-        SUBGRAPH_SERVICE = "0xb2bb92d0de618878e438b55d5846cfecd9301105"
-        
-        # Function selector for getRewards(address,address)
-        selector = Web3.keccak(text="getRewards(address,address)")[:4].hex()
-        
-        total_rewards = 0.0
-        
-        # Try both rewards issuers (legacy Staking and new SubgraphService)
-        for issuer in [STAKING, SUBGRAPH_SERVICE]:
-            try:
-                calldata = selector + issuer[2:].lower().zfill(64) + allocation_id[2:].lower().zfill(64)
-                result = w3.eth.call({
-                    "to": Web3.to_checksum_address(REWARDS_MANAGER),
-                    "data": f"0x{calldata}"
-                })
-                rewards_wei = int(result.hex(), 16)
-                if rewards_wei > 0:
-                    total_rewards = rewards_wei / 1e18
-                    break
-            except:
-                continue
-        
-        return total_rewards
-    except ImportError:
-        # web3 not installed
-        return None
-    except Exception as e:
-        # RPC call failed
-        return None
-
-
-def get_indexer_reward_cut(indexer_id: str, network_url: str) -> Optional[float]:
-    """Get the indexer's reward cut (percentage kept by indexer vs delegators)"""
-    try:
-        # Remove trailing slash if present
-        url = network_url.rstrip('/')
-        
-        query = """
-        query GetIndexer($id: String!) {
-            indexer(id: $id) {
-                indexingRewardCut
-            }
-        }
-        """
-        response = requests.post(url, json={'query': query, 'variables': {'id': indexer_id.lower()}})
-        data = response.json().get('data', {})
-        indexer = data.get('indexer')
-        if indexer:
-            # indexingRewardCut is in PPM (parts per million)
-            cut_ppm = int(indexer.get('indexingRewardCut', 0))
-            return cut_ppm / 1_000_000  # Convert to decimal (0.265 = 26.5%)
-        return None
-    except:
-        return None
 
 
 def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Optional[str] = None, ens_client: Optional[ENSClient] = None, indexer_urls: Optional[Dict[str, str]] = None, reward_proportion: Optional[float] = None, network_url: Optional[str] = None, subgraph_hash: Optional[str] = None):
@@ -1313,7 +1004,7 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
                 
                 # Try to get real rewards from contract
                 if allocation_id:
-                    my_accrued_rewards = get_accrued_rewards_from_contract(allocation_id)
+                    my_accrued_rewards = get_accrued_rewards(allocation_id)
         else:
             marker = " "
             indexer_color = Colors.WHITE
@@ -1612,98 +1303,6 @@ def print_signal_changes(changes: List[Dict], hours: int = 48):
     print(f"{Colors.BOLD}Total:{Colors.RESET} {Colors.BRIGHT_GREEN}+{total_added:,.0f}{Colors.RESET} | {Colors.BRIGHT_RED}-{total_removed:,.0f}{Colors.RESET} | Net: {net_color}{net:,.0f} GRT{Colors.RESET}")
 
 
-def get_network_subgraph_url() -> str:
-    """Get network subgraph URL from environment variable or config"""
-    # Priority 1: Environment variable
-    env_url = os.environ.get('THEGRAPH_NETWORK_SUBGRAPH_URL')
-    if env_url:
-        return env_url.rstrip('/')
-    
-    # Priority 2: Config file
-    config_file = Path.home() / '.grtinfo' / 'config.json'
-    if config_file.exists():
-        try:
-            with open(config_file, 'r') as f:
-                content = f.read().strip()
-                if not content:
-                    print(f"Warning: Config file {config_file} is empty", file=sys.stderr)
-                else:
-                    config = json.loads(content)
-                    url = config.get('network_subgraph_url') or config.get('subgraph_url')
-                    if url:
-                        return url.rstrip('/')
-        except json.JSONDecodeError as e:
-            print(f"Error: Config file {config_file} is not valid JSON.", file=sys.stderr)
-            print(f"  Error: {e}", file=sys.stderr)
-            print(f"  File must be in JSON format, example:", file=sys.stderr)
-            print(f'  {{"network_subgraph_url": "http://host/subgraphs/id/QmHash"}}', file=sys.stderr)
-        except Exception as e:
-            print(f"Warning: Unable to load config: {e}", file=sys.stderr)
-    
-    # Priority 3: No default - must be configured
-    print("Error: No TheGraph Network subgraph URL configured.", file=sys.stderr)
-    print("Please set THEGRAPH_NETWORK_SUBGRAPH_URL environment variable", file=sys.stderr)
-    print("or create ~/.grtinfo/config.json with 'network_subgraph_url' key.", file=sys.stderr)
-    sys.exit(1)
-
-
-def get_my_indexer_id() -> Optional[str]:
-    """Get user's indexer ID from environment variable or config"""
-    # Priority 1: Environment variable
-    env_indexer = os.environ.get('MY_INDEXER_ID')
-    if env_indexer:
-        return env_indexer.lower()
-    
-    # Priority 2: Config file
-    config_file = Path.home() / '.grtinfo' / 'config.json'
-    if config_file.exists():
-        try:
-            with open(config_file, 'r') as f:
-                content = f.read().strip()
-                if content:
-                    config = json.loads(content)
-                    indexer_id = config.get('my_indexer_id')
-                    if indexer_id:
-                        return indexer_id.lower()
-        except:
-            pass
-    
-    # Priority 3: No default - indexer highlighting is optional
-    return None
-
-
-def get_ens_subgraph_url() -> Optional[str]:
-    """Get ENS subgraph URL from environment variable or config"""
-    # Priority 1: Environment variable
-    env_url = os.environ.get('ENS_SUBGRAPH_URL')
-    if env_url:
-        return env_url.rstrip('/')
-    
-    # Priority 2: Config file
-    config_file = Path.home() / '.grtinfo' / 'config.json'
-    if config_file.exists():
-        try:
-            with open(config_file, 'r') as f:
-                content = f.read().strip()
-                if content:
-                    config = json.loads(content)
-                    url = config.get('ens_subgraph_url')
-                    if url:
-                        return url.rstrip('/')
-        except:
-            pass
-    
-    # Priority 3: Default value (hash provided by user)
-    # Build URL with configured network
-    network_url = get_network_subgraph_url()
-    # Extract base URL (without hash)
-    if '/subgraphs/id/' in network_url:
-        base_url = network_url.split('/subgraphs/id/')[0] + '/subgraphs/id'
-        return f"{base_url}/QmcE8RpWtsiN5hkJKdfCXGfTDoTgPEjMbQwnjLPfThT7kZ"
-    
-    return None
-
-
 def format_indexer_display(indexer_id: str, ens_name: Optional[str] = None, url: Optional[str] = None, max_width: int = 32) -> str:
     """Format indexer display with ENS name or URL if available, truncated to max_width"""
     if ens_name:
@@ -1732,17 +1331,6 @@ def format_indexer_display(indexer_id: str, ens_name: Optional[str] = None, url:
         return f"{display_url}{addr_suffix}"
     
     return indexer_id[:10] + ".." if len(indexer_id) > 10 else indexer_id
-
-
-def strip_ansi(text: str) -> str:
-    """Remove ANSI color codes from text"""
-    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-    return ansi_escape.sub('', text)
-
-
-def get_display_width(text: str) -> int:
-    """Get display width of text without ANSI codes"""
-    return len(strip_ansi(text))
 
 
 def format_sync_status(status: Optional[Dict]) -> str:

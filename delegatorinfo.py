@@ -29,37 +29,14 @@ from pathlib import Path
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-
-class Colors:
-    """ANSI color codes for terminal output"""
-    RESET = '\033[0m'
-    BOLD = '\033[1m'
-    DIM = '\033[2m'
-    
-    # Standard colors
-    RED = '\033[31m'
-    GREEN = '\033[32m'
-    YELLOW = '\033[33m'
-    BLUE = '\033[34m'
-    MAGENTA = '\033[35m'
-    CYAN = '\033[36m'
-    WHITE = '\033[37m'
-    
-    # Bright colors
-    BRIGHT_RED = '\033[91m'
-    BRIGHT_GREEN = '\033[92m'
-    BRIGHT_YELLOW = '\033[93m'
-    BRIGHT_BLUE = '\033[94m'
-    BRIGHT_MAGENTA = '\033[95m'
-    BRIGHT_CYAN = '\033[96m'
-
-
-def terminal_link(url: str, text: str) -> str:
-    """Create a clickable terminal hyperlink (OSC 8)
-    Can be disabled by setting NO_HYPERLINKS=1 environment variable"""
-    if os.environ.get('NO_HYPERLINKS') == '1':
-        return text
-    return f'\033]8;;{url}\033\\{text}\033]8;;\033\\'
+# Import shared modules
+from common import (
+    Colors, terminal_link,
+    format_tokens, format_tokens_short, format_duration, print_section
+)
+from config import get_network_subgraph_url, get_ens_subgraph_url, get_analytics_subgraph_url
+from ens import ENSClient
+from contracts import REWARDS_MANAGER, STAKING, SUBGRAPH_SERVICE, GRT_DECIMALS
 
 
 class TheGraphClient:
@@ -275,281 +252,12 @@ class AnalyticsClient:
         return result.get('delegator')
 
 
-class ENSClient:
-    """Client to resolve ENS names"""
-    
-    def __init__(self, ens_subgraph_url: str):
-        self.ens_subgraph_url = ens_subgraph_url.rstrip('/')
-        self._session = requests.Session()
-        self._cache = {}
-        self._cache_file = Path.home() / '.grtinfo' / 'ens_cache.json'
-        self._load_cache()
-    
-    def _load_cache(self):
-        try:
-            if self._cache_file.exists():
-                with open(self._cache_file, 'r') as f:
-                    cache_data = json.load(f)
-                    now = time.time()
-                    for addr, entry in cache_data.items():
-                        if isinstance(entry, dict) and 'name' in entry:
-                            self._cache[addr] = entry
-                        elif isinstance(entry, str) or entry is None:
-                            self._cache[addr] = {'name': entry, 'timestamp': now}
-        except:
-            pass
-    
-    def query(self, query: str, variables: Optional[Dict] = None) -> Dict:
-        try:
-            response = self._session.post(
-                self.ens_subgraph_url,
-                json={'query': query, 'variables': variables or {}},
-                headers={'Content-Type': 'application/json'},
-                timeout=10
-            )
-            response.raise_for_status()
-            data = response.json()
-            if 'errors' in data:
-                return {}
-            return data.get('data', {})
-        except:
-            return {}
-    
-    def resolve_address(self, address: str) -> Optional[str]:
-        if not address or address == 'Unknown':
-            return None
-        
-        address_lower = address.lower()
-        if address_lower in self._cache:
-            entry = self._cache[address_lower]
-            if isinstance(entry, dict):
-                return entry.get('name')
-            return entry
-        
-        query = """
-        query ResolveAddress($address: String!) {
-            domains(
-                where: { resolvedAddress: $address }
-                first: 1
-                orderBy: createdAt
-                orderDirection: desc
-            ) {
-                name
-            }
-        }
-        """
-        
-        try:
-            result = self.query(query, {'address': address_lower})
-            domains = result.get('domains', [])
-            if domains:
-                name = domains[0].get('name')
-                if name:
-                    self._cache[address_lower] = {'name': name, 'timestamp': time.time()}
-                    self._save_cache()
-                    return name
-        except:
-            pass
-        
-        self._cache[address_lower] = {'name': None, 'timestamp': time.time()}
-        self._save_cache()
-        return None
-    
-    def resolve_addresses_batch(self, addresses: List[str]) -> Dict[str, Optional[str]]:
-        """Resolve multiple addresses in a single query"""
-        results = {}
-        addresses_lower = [addr.lower() for addr in addresses if addr and addr != 'Unknown']
-        
-        if not addresses_lower:
-            return results
-        
-        # Check cache first
-        to_query = []
-        for addr in addresses_lower:
-            if addr in self._cache:
-                entry = self._cache[addr]
-                if isinstance(entry, dict):
-                    results[addr] = entry.get('name')
-                else:
-                    results[addr] = entry
-            else:
-                to_query.append(addr)
-        
-        # If all addresses were cached, return early
-        if not to_query:
-            return results
-        
-        # Batch query only for uncached addresses
-        query = """
-        query ResolveAddresses($addresses: [String!]!) {
-            domains(
-                where: { resolvedAddress_in: $addresses }
-                first: 100
-            ) {
-                name
-                resolvedAddress {
-                    id
-                }
-            }
-        }
-        """
-        
-        try:
-            result = self.query(query, {'addresses': to_query})
-            domains = result.get('domains', [])
-            for domain in domains:
-                addr = domain.get('resolvedAddress', {}).get('id', '').lower()
-                name = domain.get('name')
-                if addr and name:
-                    results[addr] = name
-                    self._cache[addr] = {'name': name, 'timestamp': time.time()}
-            
-            # Put None for addresses not found
-            for addr in to_query:
-                if addr not in results:
-                    results[addr] = None
-                    self._cache[addr] = {'name': None, 'timestamp': time.time()}
-            
-            self._save_cache()
-        except:
-            pass
-        
-        return results
-    
-    def _save_cache(self):
-        """Save ENS cache to disk"""
-        try:
-            cache_data = {}
-            for addr, entry in self._cache.items():
-                if isinstance(entry, dict):
-                    cache_data[addr] = entry
-                else:
-                    cache_data[addr] = {'name': entry, 'timestamp': time.time()}
-            self._cache_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._cache_file, 'w') as f:
-                json.dump(cache_data, f)
-        except:
-            pass
-    
-    def resolve_name(self, name: str) -> Optional[str]:
-        """Resolve ENS name to address"""
-        query = """
-        query ResolveName($name: String!) {
-            domains(
-                where: { name: $name }
-                first: 1
-            ) {
-                resolvedAddress { id }
-            }
-        }
-        """
-        result = self.query(query, {'name': name.lower()})
-        domains = result.get('domains', [])
-        if domains:
-            resolved = domains[0].get('resolvedAddress', {})
-            if resolved:
-                return resolved.get('id')
-        return None
-
-
-def format_tokens(tokens: str) -> str:
-    """Format token amount with thousands separator"""
-    try:
-        amount = float(tokens) / 1e18
-        if amount >= 1:
-            return f"{amount:,.2f} GRT"
-        elif amount > 0:
-            return f"{amount:.4f} GRT"
-        else:
-            return "0 GRT"
-    except:
-        return "0 GRT"
-
-
-def format_tokens_short(tokens: str) -> str:
-    """Format token amount in short form"""
-    try:
-        amount = float(tokens) / 1e18
-        if amount >= 1_000_000:
-            return f"{amount/1_000_000:.2f}M"
-        elif amount >= 1_000:
-            return f"{amount/1_000:.2f}k"
-        elif amount >= 1:
-            return f"{amount:,.0f}"
-        else:
-            return f"{amount:.2f}"
-    except:
-        return "0"
-
-
 def format_timestamp(ts: str) -> str:
     try:
         dt = datetime.fromtimestamp(int(ts))
         return dt.strftime('%Y-%m-%d %H:%M')
     except:
         return 'Unknown'
-
-
-def format_duration(seconds: int) -> str:
-    """Format duration in human readable format"""
-    if seconds < 0:
-        return "expired"
-    days = seconds // 86400
-    hours = (seconds % 86400) // 3600
-    minutes = (seconds % 3600) // 60
-    if days > 0:
-        return f"{days}d {hours}h"
-    elif hours > 0:
-        return f"{hours}h {minutes}m"
-    else:
-        return f"{minutes}m"
-
-
-def print_section(title: str):
-    """Display a compact section title"""
-    print(f"\n{Colors.CYAN}▸ {title}{Colors.RESET}")
-
-
-def get_network_subgraph_url() -> str:
-    """Get network subgraph URL from environment variable or config"""
-    env_url = os.environ.get('THEGRAPH_NETWORK_SUBGRAPH_URL')
-    if env_url:
-        return env_url.rstrip('/')
-    
-    config_file = Path.home() / '.grtinfo' / 'config.json'
-    if config_file.exists():
-        try:
-            with open(config_file, 'r') as f:
-                content = f.read().strip()
-                if content:
-                    config = json.loads(content)
-                    url = config.get('network_subgraph_url')
-                    if url:
-                        return url.rstrip('/')
-        except:
-            pass
-    
-    return None
-
-
-def get_ens_subgraph_url() -> str:
-    """Get ENS subgraph URL"""
-    env_url = os.environ.get('ENS_SUBGRAPH_URL')
-    if env_url:
-        return env_url.rstrip('/')
-    
-    config_file = Path.home() / '.grtinfo' / 'config.json'
-    if config_file.exists():
-        try:
-            with open(config_file, 'r') as f:
-                config = json.loads(f.read())
-                url = config.get('ens_subgraph_url')
-                if url:
-                    return url.rstrip('/')
-        except:
-            pass
-    
-    return None
 
 
 def get_rpc_url() -> str:
@@ -645,11 +353,7 @@ def get_accrued_rewards_from_contract(allocation_id: str, rpc_url: Optional[str]
         
         w3 = Web3(Web3.HTTPProvider(rpc_url))
         
-        # Contract addresses on Arbitrum One
-        REWARDS_MANAGER = "0x971b9d3d0ae3eca029cab5ea1fb0f72c85e6a525"
-        STAKING = "0x00669a4cf01450b64e8a2a20e9b1fcb71e61ef03"  # Pre-Horizon
-        SUBGRAPH_SERVICE = "0xb2bb92d0de618878e438b55d5846cfecd9301105"  # Horizon
-        
+        # Contract addresses imported from contracts.py
         # Function selector for getRewards(address,address)
         selector = Web3.keccak(text="getRewards(address,address)")[:4].hex()
         
@@ -666,7 +370,7 @@ def get_accrued_rewards_from_contract(allocation_id: str, rpc_url: Optional[str]
                 })
                 rewards_wei = int(result.hex(), 16)
                 if rewards_wei > 0:
-                    total_rewards += rewards_wei / 1e18
+                    total_rewards += rewards_wei / (10 ** GRT_DECIMALS)
             except:
                 continue
         
@@ -842,23 +546,9 @@ def get_delegator_total_rewards_from_contract(delegator_id: str, indexer_id: str
         
         w3 = Web3(Web3.HTTPProvider(rpc_url))
         
-        # Contract addresses on Arbitrum One
-        REWARDS_MANAGER = "0x971b9d3d0ae3eca029cab5ea1fb0f72c85e6a525"
-        STAKING = "0x00669a4cf01450b64e8a2a20e9b1fcb71e61ef03"  # Pre-Horizon
-        SUBGRAPH_SERVICE = "0xb2bb92d0de618878e438b55d5846cfecd9301105"  # Horizon
-        
-        # Function selector for getRewards(address,address)
-        selector = Web3.keccak(text="getRewards(address,address)")[:4].hex()
-        
-        total_rewards = 0.0
-        
-        # We need to get all allocations for this indexer where delegator has stake
-        # But we don't have a direct contract method for this
-        # Instead, we'll rely on the subgraph to get allocation IDs
-        # and then sum rewards from contracts
-        
-        # This function will be called with allocation IDs from subgraph
-        # So we'll sum rewards from all allocations passed in
+        # Contract addresses imported from contracts.py
+        # This function needs allocation IDs from subgraph to work
+        # The logic would sum rewards from all allocations for this indexer
         
         return None  # This approach needs allocation IDs from subgraph
     except ImportError:
@@ -1596,4 +1286,5 @@ Examples:
 
 if __name__ == "__main__":
     main()
+
 
