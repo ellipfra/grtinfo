@@ -33,14 +33,193 @@ from common import (
     format_tokens, format_timestamp, format_duration,
     print_section, strip_ansi, get_display_width
 )
-from config import get_network_subgraph_url, get_ens_subgraph_url, get_my_indexer_id
+from config import get_network_subgraph_url, get_ens_subgraph_url, get_my_indexer_id, get_analytics_subgraph_url, get_rpc_url
 from ens_client import ENSClient
 from sync_status import IndexerStatusClient, format_sync_status as _format_sync_status
 from rewards import get_accrued_rewards, get_indexer_reward_cut
 from logger import setup_logging, get_logger
 
 log = get_logger(__name__)
+
+
+def get_current_block_number(rpc_url: Optional[str] = None) -> Optional[int]:
+    """Get current block number from Arbitrum RPC
     
+    Args:
+        rpc_url: Optional RPC URL. If not provided, uses configured RPC.
+        
+    Returns:
+        Current block number or None if RPC is not available
+    """
+    url = rpc_url or get_rpc_url()
+    if not url:
+        return None
+    
+    try:
+        response = requests.post(
+            url,
+            json={
+                "jsonrpc": "2.0",
+                "method": "eth_blockNumber",
+                "params": [],
+                "id": 1
+            },
+            timeout=5
+        )
+        if response.status_code == 200:
+            result = response.json()
+            if 'result' in result:
+                return int(result['result'], 16)
+    except Exception as e:
+        log.debug(f"Failed to get block number from RPC: {e}")
+    
+    return None
+
+
+class AnalyticsClient:
+    """Client to query The Graph Analytics subgraph"""
+    
+    def __init__(self, analytics_subgraph_url: str):
+        self.analytics_subgraph_url = analytics_subgraph_url.rstrip('/')
+        self._session = requests.Session()
+    
+    def query(self, query: str, variables: Optional[Dict] = None) -> Dict:
+        """Execute a GraphQL query"""
+        try:
+            response = self._session.post(
+                self.analytics_subgraph_url,
+                json={'query': query, 'variables': variables or {}},
+                headers={'Content-Type': 'application/json'},
+                timeout=30
+            )
+            response.raise_for_status()
+            data = response.json()
+            if 'errors' in data:
+                return {}
+            return data.get('data', {})
+        except Exception as e:
+            log.debug(f"Analytics query error: {e}")
+            return {}
+    
+    def get_signal_changes(self, deployment_id: str, hours: int = 48) -> List[Dict]:
+        """Get signal changes (additions and withdrawals) for a deployment from analytics subgraph"""
+        cutoff_time = int((datetime.now() - timedelta(hours=hours)).timestamp())
+        changes = []
+        
+        # Try multiple possible entity names/structures in analytics subgraph
+        # The analytics subgraph might index signal events differently
+        possible_queries = [
+            # Try signalChanges entity
+            ("""
+            query GetSignalChanges($deploymentId: String!, $cutoffTime: BigInt!) {
+                signalChanges(
+                    where: { 
+                        subgraphDeployment: $deploymentId
+                        timestamp_gte: $cutoffTime
+                    }
+                    orderBy: timestamp
+                    orderDirection: desc
+                    first: 1000
+                ) {
+                    id
+                    timestamp
+                    type
+                    curator {
+                        id
+                    }
+                    tokens
+                    signal
+                }
+            }
+            """, 'signalChanges'),
+            # Try curationEvents entity
+            ("""
+            query GetCurationEvents($deploymentId: String!, $cutoffTime: BigInt!) {
+                curationEvents(
+                    where: { 
+                        subgraphDeployment: $deploymentId
+                        timestamp_gte: $cutoffTime
+                    }
+                    orderBy: timestamp
+                    orderDirection: desc
+                    first: 1000
+                ) {
+                    id
+                    timestamp
+                    type
+                    curator {
+                        id
+                    }
+                    tokens
+                    signal
+                }
+            }
+            """, 'curationEvents'),
+            # Try signalTransactions (if analytics has it with better structure)
+            ("""
+            query GetSignalTransactions($deploymentId: String!, $cutoffTime: BigInt!) {
+                signalTransactions(
+                    where: { 
+                        subgraphDeployment: $deploymentId
+                        timestamp_gte: $cutoffTime
+                    }
+                    orderBy: timestamp
+                    orderDirection: desc
+                    first: 1000
+                ) {
+                    id
+                    timestamp
+                    type
+                    curator {
+                        id
+                    }
+                    tokens
+                    signal
+                    subgraphDeployment {
+                        id
+                    }
+                }
+            }
+            """, 'signalTransactions'),
+        ]
+        
+        for query_template, entity_name in possible_queries:
+            try:
+                result = self.query(query_template, {
+                    'deploymentId': deployment_id.lower(),
+                    'cutoffTime': str(cutoff_time)
+                })
+                
+                signal_changes = result.get(entity_name, [])
+                if signal_changes:
+                    log.debug(f"Found {len(signal_changes)} signal changes from analytics subgraph using {entity_name}")
+                    for change in signal_changes:
+                        change_type = change.get('type', '').lower()
+                        curator_id = 'Unknown'
+                        if change.get('curator'):
+                            curator_id = change.get('curator', {}).get('id', 'Unknown')
+                        
+                        # Map to our change type format
+                        if 'remove' in change_type or 'withdraw' in change_type or 'burn' in change_type:
+                            mapped_type = 'unsignal'
+                        else:
+                            mapped_type = 'signal'
+                        
+                        changes.append({
+                            'type': mapped_type,
+                            'signaller': curator_id,
+                            'tokens': str(change.get('tokens', change.get('signal', '0'))),
+                            'timestamp': str(change.get('timestamp', '0'))
+                        })
+                    
+                    # If we found changes, return them (don't try other queries)
+                    if changes:
+                        break
+            except Exception as e:
+                log.debug(f"Analytics query for {entity_name} failed: {e}")
+                continue
+        
+        return changes
 
 
 class TheGraphClient:
@@ -635,29 +814,44 @@ class TheGraphClient:
             deployment_age_days = (datetime.now().timestamp() - int(deployment_created_at)) / (24 * 3600)
             is_new_deployment = deployment_age_days <= 7
         
-        # Get individual signals
-        signals_query = """
-        query GetSignals($deploymentId: String!) {
-            signals(
-                where: { subgraphDeployment: $deploymentId }
-                first: 100
-                orderBy: createdAt
-                orderDirection: desc
-            ) {
-                id
-                signaller {
+        # Get individual signals (both current and historical)
+        # Use pagination to get all signals, not just recent ones
+        all_signals = []
+        skip = 0
+        batch_size = 1000
+        
+        while True:
+            signals_query = """
+            query GetSignals($deploymentId: String!, $skip: Int!) {
+                signals(
+                    where: { subgraphDeployment: $deploymentId }
+                    first: 1000
+                    skip: $skip
+                    orderBy: createdAt
+                    orderDirection: desc
+                ) {
                     id
+                    signaller {
+                        id
+                    }
+                    signalledTokens
+                    createdAt
                 }
-                signalledTokens
-                createdAt
             }
-        }
-        """
-        try:
-            signals_result = self.query(signals_query, {'deploymentId': deployment['id']})
-            signals = signals_result.get('signals', [])
-        except:
-            signals = []
+            """
+            try:
+                signals_result = self.query(signals_query, {'deploymentId': deployment['id'], 'skip': skip})
+                batch_signals = signals_result.get('signals', [])
+                if not batch_signals:
+                    break
+                all_signals.extend(batch_signals)
+                if len(batch_signals) < batch_size:
+                    break
+                skip += batch_size
+            except:
+                break
+        
+        signals = all_signals
         
         return {
             'signalledTokens': deployment.get('signalledTokens', '0'),
@@ -666,8 +860,8 @@ class TheGraphClient:
             'deploymentCreatedAt': deployment_created_at
         }
     
-    def get_curation_signal_changes(self, subgraph_id: str, hours: int = 48) -> List[Dict]:
-        """Get curation signal changes for the last N hours, including upgrades"""
+    def get_curation_signal_changes(self, subgraph_id: str, hours: int = 48, analytics_client: Optional['AnalyticsClient'] = None) -> List[Dict]:
+        """Get curation signal changes using time travel queries for precise detection"""
         cutoff_time = int((datetime.now() - timedelta(hours=hours)).timestamp())
         
         # First find the deployment ID and check for upgrades
@@ -724,195 +918,96 @@ class TheGraphClient:
                         # Check if this is an old deployment and there's a newer one
                         if current_dep_id and current_dep_id != old_deployment_id:
                             current_dep_created = int(current_deployment.get('createdAt', '0'))
-                            # Subgraph was upgraded, signal was transferred to new deployment
-                            # Store new deployment info for upgrade detection (no time limit)
                             new_deployment_info = {
                                 'id': current_dep_id,
                                 'hash': current_dep_hash,
                                 'created': current_dep_created,
                                 'signal': current_deployment.get('signalAmount', '0')
                             }
-                            deployment_id = current_dep_id  # Use current deployment for queries
+                            deployment_id = current_dep_id
                         else:
-                            # Same deployment, no upgrade
                             deployment_id = old_deployment_id
                             new_deployment_info = None
                 else:
                     return []
             except Exception as e:
-                # If we can't find the deployment, return empty
-                # Reset new_deployment_info if exception occurred
-                new_deployment_info = None
-                pass
+                log.debug(f"Error finding deployment: {e}")
+                return []
         
-        # Search for signal changes via SignalTransaction (captures both adds and removes)
-        # Use inline query because BigInt variables cause issues
-        query = f"""
-        {{
-            signalTransactions(
-                where: {{ 
-                    timestamp_gte: {cutoff_time}
-                }}
-                orderBy: timestamp
-                orderDirection: desc
-                first: 500
-            ) {{
-                id
-                timestamp
-                type
-                signal {{
-                    subgraphDeployment {{
-                        id
-                    }}
+        # Use time travel queries to detect signal changes
+        # Try to get precise block number from RPC, fall back to estimation
+        try:
+            current_block = get_current_block_number()
+            
+            if current_block:
+                # RPC available - use precise block number
+                # Arbitrum has ~0.25 second blocks (4 blocks/second)
+                blocks_per_hour = 4 * 3600
+                past_block = max(0, current_block - (hours * blocks_per_hour))
+                log.debug(f"Using RPC block numbers: current={current_block}, past={past_block}")
+            else:
+                # Fallback to estimation
+                # Arbitrum genesis: ~2021-05-28, ~1 block per 0.25 seconds
+                arbitrum_genesis_timestamp = 1622140800
+                current_timestamp = int(datetime.now().timestamp())
+                # Rough estimate: 4 blocks per second since genesis
+                estimated_current_block = (current_timestamp - arbitrum_genesis_timestamp) * 4
+                past_block = max(0, estimated_current_block - (hours * 4 * 3600))
+                current_block = estimated_current_block
+                log.debug(f"Using estimated block numbers: current={current_block}, past={past_block}")
+            
+            # Get current signal and signals (latest block)
+            current_query = f"""
+            {{
+                subgraphDeployment(id: "{deployment_id}") {{
                     signalledTokens
+                }}
+                signals(
+                    where: {{ subgraphDeployment: "{deployment_id}" }}
+                    first: 1000
+                ) {{
+                    id
                     curator {{
                         id
                     }}
+                    signalledTokens
+                    createdAt
                 }}
             }}
-        }}
-        """
-        try:
-            result = self.query(query)
-            transactions = result.get('signalTransactions', [])
+            """
+            current_result = self.query(current_query)
+            current_deployment = current_result.get('subgraphDeployment')
+            if not current_deployment:
+                return []
+            
+            current_signal_wei = float(current_deployment.get('signalledTokens', '0'))
+            current_signals = current_result.get('signals', [])
+            
+            # Get signal at past block using time travel query
+            past_query = f"""
+            {{
+                subgraphDeployment(id: "{deployment_id}", block: {{ number: {past_block} }}) {{
+                    signalledTokens
+                }}
+            }}
+            """
+            past_result = self.query(past_query)
+            past_deployment = past_result.get('subgraphDeployment')
+            time_travel_succeeded = past_deployment is not None
+            
+            if time_travel_succeeded:
+                past_signal_wei = float(past_deployment.get('signalledTokens', '0'))
+                log.debug(f"Time travel query succeeded: block {past_block}, past signal: {past_signal_wei/1e18:.2f} GRT")
+            else:
+                past_signal_wei = 0
+                log.debug(f"Time travel query failed for block {past_block}")
             
             changes = []
-            for tx in transactions:
-                signal = tx.get('signal', {})
-                if not signal or not isinstance(signal, dict):
-                    continue
-                
-                tx_deployment = signal.get('subgraphDeployment', {})
-                if not tx_deployment or tx_deployment.get('id') != deployment_id:
-                    continue
-                
-                tx_type = tx.get('type', '')
-                curator_id = 'Unknown'
-                if signal.get('curator'):
-                    curator_id = signal.get('curator', {}).get('id', 'Unknown')
-                
-                # Map transaction type to change type
-                if tx_type in ['Signal', 'SignalAdded']:
-                    change_type = 'signal'
-                elif tx_type in ['SignalRemoved', 'SignalWithdrawn']:
-                    change_type = 'unsignal'
-                else:
-                    change_type = 'signal'  # Default to signal
-                
-                changes.append({
-                    'type': change_type,
-                    'signaller': curator_id,
-                    'tokens': signal.get('signalledTokens', '0'),
-                    'timestamp': str(tx.get('timestamp', '0'))
-                })
             
-            # Check for subgraph upgrades (signal transfer to new deployment)
-            # If we're viewing the OLD deployment, signal was transferred OUT (loss)
-            if new_deployment_info is not None:
-                # Add upgrade as signal change (only if not already added)
-                upgrade_exists = any(c.get('type') == 'upgrade_out' and c.get('timestamp') == str(new_deployment_info['created']) for c in changes)
-                if not upgrade_exists:
-                    new_hash = new_deployment_info['hash']
-                    new_subgraph_id = self.get_subgraph_id(new_hash) if new_hash != 'Unknown' else None
-                    # Get signal from the OLD deployment (what was transferred out)
-                    old_signal_query = f"""
-                    {{
-                        subgraphDeployment(id: "{old_deployment_id}") {{
-                            signalAmount
-                        }}
-                    }}
-                    """
-                    try:
-                        old_signal_result = self.query(old_signal_query)
-                        old_signal = old_signal_result.get('subgraphDeployment', {}).get('signalAmount', '0')
-                    except:
-                        old_signal = new_deployment_info['signal']  # Fallback to new signal
-                    
-                    changes.insert(0, {  # Insert at beginning to show upgrade first
-                        'type': 'upgrade_out',  # Signal transferred OUT of this deployment
-                        'signaller': 'Subgraph Upgrade',
-                        'tokens': old_signal if old_signal != '0' else new_deployment_info['signal'],
-                        'timestamp': str(new_deployment_info['created']),
-                        'new_deployment_hash': new_hash,
-                        'new_subgraph_id': new_subgraph_id
-                    })
-            elif old_deployment_id and old_deployment_id != deployment_id:
-                # Fallback: if new_deployment_info wasn't set but we know there's an upgrade
-                # This can happen if the first query didn't find the currentVersion correctly
-                try:
-                    upgrade_query = """
-                    query FindUpgrade($oldDeploymentId: String!, $newDeploymentId: String!) {
-                        oldDeployment: subgraphDeployment(id: $oldDeploymentId) {
-                            id
-                            ipfsHash
-                            signalAmount
-                        }
-                        newDeployment: subgraphDeployment(id: $newDeploymentId) {
-                            id
-                            ipfsHash
-                            createdAt
-                            signalAmount
-                        }
-                    }
-                    """
-                    upgrade_result = self.query(upgrade_query, {
-                        'oldDeploymentId': old_deployment_id,
-                        'newDeploymentId': deployment_id
-                    })
-                    old_deployment = upgrade_result.get('oldDeployment', {})
-                    new_deployment = upgrade_result.get('newDeployment', {})
-                    if new_deployment:
-                        new_dep_created = int(new_deployment.get('createdAt', '0'))
-                        # Use old deployment's signal (what was transferred out)
-                        old_signal = old_deployment.get('signalAmount', '0') if old_deployment else '0'
-                        new_signal = new_deployment.get('signalAmount', '0')
-                        # Add upgrade as signal change (only if not already added)
-                        upgrade_exists = any(c.get('type') == 'upgrade_out' and c.get('timestamp') == str(new_dep_created) for c in changes)
-                        if not upgrade_exists:
-                            new_hash = new_deployment.get('ipfsHash', 'Unknown')
-                            new_subgraph_id = self.get_subgraph_id(new_hash) if new_hash != 'Unknown' else None
-                            changes.insert(0, {  # Insert at beginning to show upgrade first
-                                'type': 'upgrade_out',  # Signal transferred OUT of this deployment
-                                'signaller': 'Subgraph Upgrade',
-                                'tokens': old_signal if old_signal != '0' else new_signal,
-                                'timestamp': str(new_dep_created),
-                                'new_deployment_hash': new_hash,
-                                'new_subgraph_id': new_subgraph_id
-                            })
-                except Exception as e:
-                    # Silently fail, upgrade detection is optional
-                    pass
-            
-            # Sort by timestamp descending
-            changes.sort(key=lambda x: int(x['timestamp']), reverse=True)
-            return changes
-        except Exception as e:
-            # Fallback to signals if SignalTransaction fails
-            try:
-                query_signals = f"""
-                {{
-                    signals(
-                        where: {{ 
-                            subgraphDeployment: "{deployment_id}"
-                            createdAt_gte: {cutoff_time}
-                        }}
-                        orderBy: createdAt
-                        orderDirection: desc
-                    ) {{
-                        id
-                        curator {{
-                            id
-                        }}
-                        signalledTokens
-                        createdAt
-                    }}
-                }}
-                """
-                result_signals = self.query(query_signals)
-                signals = result_signals.get('signals', [])
-                
-                changes = []
-                for sig in signals:
+            # Detect signal additions: signals created within time window
+            for sig in current_signals:
+                created_at = int(sig.get('createdAt', '0'))
+                if created_at >= cutoff_time:
                     curator_id = 'Unknown'
                     if sig.get('curator'):
                         curator_id = sig.get('curator', {}).get('id', 'Unknown')
@@ -920,13 +1015,89 @@ class TheGraphClient:
                         'type': 'signal',
                         'signaller': curator_id,
                         'tokens': sig.get('signalledTokens', '0'),
-                        'timestamp': str(sig.get('createdAt', '0'))
+                        'timestamp': str(created_at)
                     })
+            
+            # Detect signal changes using time travel comparison
+            if time_travel_succeeded:
+                # Time travel query succeeded - use direct comparison (most reliable)
+                signal_diff_wei = current_signal_wei - past_signal_wei
                 
-                changes.sort(key=lambda x: int(x['timestamp']), reverse=True)
-                return changes
-            except:
-                return []
+                if signal_diff_wei < -1000000000000000000:  # More than 1 GRT withdrawal
+                    withdrawal_amount_wei = abs(signal_diff_wei)
+                    withdrawal_amount_grt = withdrawal_amount_wei / 1e18
+                    
+                    if withdrawal_amount_grt > 1:
+                        estimated_timestamp = cutoff_time + (hours * 3600 // 2)
+                        changes.append({
+                            'type': 'unsignal',
+                            'signaller': 'Unknown (time travel)',
+                            'tokens': str(int(withdrawal_amount_wei)),
+                            'timestamp': str(estimated_timestamp)
+                        })
+                        log.debug(f"Detected withdrawal via time travel: {withdrawal_amount_grt:.2f} GRT (current: {current_signal_wei/1e18:.2f}, past: {past_signal_wei/1e18:.2f})")
+                
+                elif signal_diff_wei > 1000000000000000000:  # More than 1 GRT addition
+                    # Only add if not already captured by individual signal additions
+                    already_detected = sum(float(c.get('tokens', '0')) for c in changes if c.get('type') == 'signal')
+                    remaining_addition = signal_diff_wei - already_detected
+                    
+                    if remaining_addition > 1000000000000000000:
+                        addition_amount_grt = remaining_addition / 1e18
+                        if addition_amount_grt > 1:
+                            estimated_timestamp = cutoff_time + (hours * 3600 // 2)
+                            changes.append({
+                                'type': 'signal',
+                                'signaller': 'Unknown (time travel)',
+                                'tokens': str(int(remaining_addition)),
+                                'timestamp': str(estimated_timestamp)
+                            })
+                            log.debug(f"Detected additional signal via time travel: {addition_amount_grt:.2f} GRT")
+            else:
+                # Time travel failed - limited detection capability
+                # We can only reliably detect:
+                # 1. New signal positions created after cutoff_time (already done above)
+                # 2. Nothing else is reliable without time travel
+                # 
+                # Log for debugging but don't make unreliable guesses
+                current_total_individual_wei = sum(float(sig.get('signalledTokens', '0')) for sig in current_signals)
+                log.debug(f"Time travel unavailable. Current deployment: {current_signal_wei/1e18:.2f} GRT, individual signals: {current_total_individual_wei/1e18:.2f} GRT")
+            
+            # Check for subgraph upgrades
+            if new_deployment_info is not None:
+                upgrade_exists = any(c.get('type') == 'upgrade_out' for c in changes)
+                if not upgrade_exists:
+                    new_hash = new_deployment_info['hash']
+                    new_subgraph_id = self.get_subgraph_id(new_hash) if new_hash != 'Unknown' else None
+                    try:
+                        old_signal_query = f"""
+                        {{
+                            subgraphDeployment(id: "{old_deployment_id}") {{
+                                signalAmount
+                            }}
+                        }}
+                        """
+                        old_signal_result = self.query(old_signal_query)
+                        old_signal = old_signal_result.get('subgraphDeployment', {}).get('signalAmount', '0')
+                    except:
+                        old_signal = new_deployment_info['signal']
+                    
+                    changes.insert(0, {
+                        'type': 'upgrade_out',
+                        'signaller': 'Subgraph Upgrade',
+                        'tokens': old_signal if old_signal != '0' else new_deployment_info['signal'],
+                        'timestamp': str(new_deployment_info['created']),
+                        'new_deployment_hash': new_hash,
+                        'new_subgraph_id': new_subgraph_id
+                    })
+            
+            # Sort by timestamp descending
+            changes.sort(key=lambda x: int(x['timestamp']), reverse=True)
+            return changes
+                
+        except Exception as e:
+            log.error(f"Time travel query failed: {e}")
+            return []
 
 
 
@@ -1597,6 +1768,15 @@ Example:
         except Exception as e:
             print(f"{Colors.DIM}Warning: Unable to initialize ENS client: {e}{Colors.RESET}\n", file=sys.stderr)
     
+    # Initialize Analytics client if configured
+    analytics_client = None
+    analytics_url = get_analytics_subgraph_url()
+    if analytics_url:
+        try:
+            analytics_client = AnalyticsClient(analytics_url)
+        except Exception as e:
+            log.debug(f"Unable to initialize Analytics client: {e}")
+    
     # Create a shared executor for async operations
     sync_executor = ThreadPoolExecutor(max_workers=15)
     sync_context = None
@@ -1611,7 +1791,7 @@ Example:
         print_curation_signal(curation_signal)
         
         # 3. Signal changes
-        signal_changes = client.get_curation_signal_changes(args.subgraph_hash, args.hours)
+        signal_changes = client.get_curation_signal_changes(args.subgraph_hash, args.hours, analytics_client)
         print_signal_changes(signal_changes, args.hours)
         
         # 4. Current allocations

@@ -228,11 +228,14 @@ class ENSClient:
         """Resolve an ENS name to its Ethereum address
         
         Args:
-            name: ENS name to resolve (e.g., "vitalik.eth")
+            name: ENS name to resolve (e.g., "vitalik.eth" or "vitalik")
         
         Returns:
             Ethereum address or None if not found
         """
+        name_lower = name.lower()
+        
+        # Try exact match first
         query = """
         query ResolveName($name: String!) {
             domains(
@@ -243,11 +246,56 @@ class ENSClient:
             }
         }
         """
-        result = self.query(query, {'name': name.lower()})
+        result = self.query(query, {'name': name_lower})
         domains = result.get('domains', [])
         if domains:
             resolved = domains[0].get('resolvedAddress', {})
             if resolved:
                 return resolved.get('id')
+        
+        # If not found and name doesn't end with .eth, try adding .eth
+        if not name_lower.endswith('.eth'):
+            name_with_eth = name_lower + '.eth'
+            result = self.query(query, {'name': name_with_eth})
+            domains = result.get('domains', [])
+            if domains:
+                resolved = domains[0].get('resolvedAddress', {})
+                if resolved:
+                    return resolved.get('id')
+        
+        # If still not found, try partial match (name contains the search term)
+        # This helps find names like "ellipfra-indexer.eth" when searching for "ellipfra"
+        query_partial = """
+        query ResolveNamePartial($search: String!) {
+            domains(
+                where: { name_contains: $search }
+                first: 20
+                orderBy: createdAt
+                orderDirection: desc
+            ) {
+                name
+                resolvedAddress { id }
+            }
+        }
+        """
+        result = self.query(query_partial, {'search': name_lower})
+        domains = result.get('domains', [])
+        if domains:
+            # Prefer names that start with the search term (exact prefix match)
+            # This helps find "ellipfra-indexer.eth" when searching for "ellipfra"
+            for domain in domains:
+                domain_name = domain.get('name', '').lower()
+                resolved = domain.get('resolvedAddress', {})
+                if resolved and resolved.get('id'):
+                    # Prefer names that start with the search term followed by a separator
+                    if domain_name.startswith(name_lower + '-') or domain_name.startswith(name_lower + '.'):
+                        return resolved.get('id')
+                    # Also accept exact prefix match
+                    if domain_name.startswith(name_lower):
+                        return resolved.get('id')
+            # Last resort: return first result
+            if domains[0].get('resolvedAddress', {}).get('id'):
+                return domains[0].get('resolvedAddress', {}).get('id')
+        
         return None
 
