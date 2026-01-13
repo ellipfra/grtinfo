@@ -629,7 +629,7 @@ class TheGraphClient:
             subgraphDeployment(id: $deploymentId) {
                 id
                 ipfsHash
-                signalAmount
+                signalledTokens
                 createdAt
                 stakedTokens
                 deniedAt
@@ -654,7 +654,7 @@ class TheGraphClient:
         
         # Get allocations and signal for this subgraph
         subgraph_allocations = deployment.get('stakedTokens', '0')
-        subgraph_signal = deployment.get('signalAmount', '0')
+        subgraph_signal = deployment.get('signalledTokens', '0')
         
         # Calculate reward proportion as ratio of (allocations/signal) vs network average
         # Reward proportion = (allocations_subgraph / signal_subgraph) / (total_allocations_network / total_signal_network) * 100
@@ -696,19 +696,19 @@ class TheGraphClient:
                             skip: {skip}
                         ) {{
                             stakedTokens
-                            signalAmount
+                            signalledTokens
                         }}
                     }}
                     """
                     totals_result = self.query(totals_query)
                     deployments = totals_result.get('subgraphDeployments', [])
-                    
+
                     if not deployments:
                         break
-                    
+
                     for dep in deployments:
                         allocations = dep.get('stakedTokens', '0')
-                        signal = dep.get('signalAmount', '0')
+                        signal = dep.get('signalledTokens', '0')
                         try:
                             allocations_float = float(allocations) / 1e18
                             signal_float = float(signal) / 1e18
@@ -935,26 +935,19 @@ class TheGraphClient:
                 return []
         
         # Use time travel queries to detect signal changes
-        # Try to get precise block number from RPC, fall back to estimation
+        # Requires RPC to get current block number
         try:
             current_block = get_current_block_number()
-            
-            if current_block:
-                # RPC available - use precise block number
-                # Arbitrum has ~0.25 second blocks (4 blocks/second)
-                blocks_per_hour = 4 * 3600
-                past_block = max(0, current_block - (hours * blocks_per_hour))
-                log.debug(f"Using RPC block numbers: current={current_block}, past={past_block}")
-            else:
-                # Fallback to estimation
-                # Arbitrum genesis: ~2021-05-28, ~1 block per 0.25 seconds
-                arbitrum_genesis_timestamp = 1622140800
-                current_timestamp = int(datetime.now().timestamp())
-                # Rough estimate: 4 blocks per second since genesis
-                estimated_current_block = (current_timestamp - arbitrum_genesis_timestamp) * 4
-                past_block = max(0, estimated_current_block - (hours * 4 * 3600))
-                current_block = estimated_current_block
-                log.debug(f"Using estimated block numbers: current={current_block}, past={past_block}")
+
+            if not current_block:
+                log.warning("RPC not configured - time travel queries disabled. Configure RPC_URL for signal change detection.")
+                return []
+
+            # RPC available - use precise block number
+            # Arbitrum has ~0.25 second blocks (4 blocks/second)
+            blocks_per_hour = 4 * 3600
+            past_block = max(0, current_block - (hours * blocks_per_hour))
+            log.debug(f"Using RPC block numbers: current={current_block}, past={past_block}")
             
             # Get current signal and signals (latest block)
             current_query = f"""

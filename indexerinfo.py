@@ -317,55 +317,96 @@ class TheGraphClient:
     
     def get_all_active_allocations(self, indexer_id: str) -> List[Dict]:
         """Get all active allocations with signal data for APR calculation"""
-        query = f"""
-        {{
-            allocations(
-                where: {{ indexer: "{indexer_id.lower()}", status: Active }}
-                first: 1000
-            ) {{
-                allocatedTokens
-                subgraphDeployment {{
-                    signalledTokens
-                    stakedTokens
+        all_allocations = []
+        skip = 0
+        batch_size = 1000
+
+        while True:
+            query = f"""
+            {{
+                allocations(
+                    where: {{ indexer: "{indexer_id.lower()}", status: Active }}
+                    first: {batch_size}
+                    skip: {skip}
+                ) {{
+                    allocatedTokens
+                    subgraphDeployment {{
+                        signalledTokens
+                        stakedTokens
+                    }}
                 }}
             }}
-        }}
-        """
-        result = self.query(query)
-        return result.get('allocations', [])
+            """
+            result = self.query(query)
+            batch = result.get('allocations', [])
+            if not batch:
+                break
+            all_allocations.extend(batch)
+            if len(batch) < batch_size:
+                break
+            skip += batch_size
+
+        return all_allocations
     
     def get_all_active_allocation_ids(self, indexer_id: str) -> List[str]:
         """Get all active allocation IDs for an indexer"""
-        query = f"""
-        {{
-            allocations(
-                where: {{ indexer: "{indexer_id.lower()}", status: Active }}
-                first: 1000
-            ) {{
-                id
+        all_ids = []
+        skip = 0
+        batch_size = 1000
+
+        while True:
+            query = f"""
+            {{
+                allocations(
+                    where: {{ indexer: "{indexer_id.lower()}", status: Active }}
+                    first: {batch_size}
+                    skip: {skip}
+                ) {{
+                    id
+                }}
             }}
-        }}
-        """
-        result = self.query(query)
-        allocations = result.get('allocations', [])
-        return [a['id'] for a in allocations if a.get('id')]
+            """
+            result = self.query(query)
+            batch = result.get('allocations', [])
+            if not batch:
+                break
+            all_ids.extend([a['id'] for a in batch if a.get('id')])
+            if len(batch) < batch_size:
+                break
+            skip += batch_size
+
+        return all_ids
     
     def get_all_active_allocations_with_created(self, indexer_id: str) -> List[Dict]:
         """Get all active allocations with their IDs and creation timestamps"""
-        query = f"""
-        {{
-            allocations(
-                where: {{ indexer: "{indexer_id.lower()}", status: Active }}
-                first: 1000
-            ) {{
-                id
-                createdAt
-                allocatedTokens
+        all_allocations = []
+        skip = 0
+        batch_size = 1000
+
+        while True:
+            query = f"""
+            {{
+                allocations(
+                    where: {{ indexer: "{indexer_id.lower()}", status: Active }}
+                    first: {batch_size}
+                    skip: {skip}
+                ) {{
+                    id
+                    createdAt
+                    allocatedTokens
+                }}
             }}
-        }}
-        """
-        result = self.query(query)
-        return result.get('allocations', [])
+            """
+            result = self.query(query)
+            batch = result.get('allocations', [])
+            if not batch:
+                break
+            all_allocations.extend(batch)
+            if len(batch) < batch_size:
+                break
+            skip += batch_size
+
+        return all_allocations
     
     def get_delegation_events(self, indexer_id: str, hours: int = 48) -> Tuple[List[Dict], List[Dict]]:
         """Get recent delegation/undelegation events for an indexer"""
@@ -950,14 +991,18 @@ Examples:
             'delegator': delegator_id
         })
     
-    if events:
-        print_section(f"Activity ({args.hours}h)")
-        events.sort(key=lambda x: x['timestamp'], reverse=True)
-        
-        for event in events[:25]:
-            ts = format_timestamp(str(event['timestamp']))  # Full date + time
+    # Separate allocation events from delegation events
+    allocation_events = [e for e in events if e['type'] in ('allocate', 'unallocate', 'collect')]
+    delegation_events = [e for e in events if e['type'] in ('delegate', 'undelegate')]
+
+    if allocation_events:
+        print_section(f"Allocation Activity ({args.hours}h)")
+        allocation_events.sort(key=lambda x: x['timestamp'], reverse=True)
+
+        for event in allocation_events[:20]:
+            ts = format_timestamp(str(event['timestamp']))
             tokens = format_tokens_short(event['tokens'])
-            
+
             if event['type'] == 'allocate':
                 symbol = f"{Colors.BRIGHT_GREEN}+{Colors.RESET}"
                 subgraph = event.get('subgraph', '?')
@@ -981,27 +1026,37 @@ Examples:
                 target = format_deployment_link(subgraph, subgraph_id) if subgraph != '?' else subgraph
                 rewards = event.get('rewards', 0) / 1e18
                 details = f"{rewards:,.0f} GRT collected"
-            elif event['type'] == 'delegate':
+            else:
+                continue
+
+            print(f"  [{symbol}] {Colors.DIM}{ts}{Colors.RESET}  {target}  {details}")
+
+    if delegation_events:
+        print_section(f"Delegation Activity ({args.hours}h)")
+        delegation_events.sort(key=lambda x: x['timestamp'], reverse=True)
+
+        for event in delegation_events[:15]:
+            ts = format_timestamp(str(event['timestamp']))
+            tokens = format_tokens_short(event['tokens'])
+
+            if event['type'] == 'delegate':
                 symbol = f"{Colors.BRIGHT_MAGENTA}↑{Colors.RESET}"
                 target = event.get('delegator', '?')
                 is_new = event.get('is_new', False)
                 if is_new:
-                    # New delegation - tokens is the initial amount
                     details = f"{Colors.BRIGHT_MAGENTA}+{tokens} GRT delegated{Colors.RESET}"
                 else:
-                    # Increase to existing - tokens is the total (we don't know how much was added)
                     details = f"{Colors.BRIGHT_MAGENTA}now {tokens} GRT (increased){Colors.RESET}"
             elif event['type'] == 'undelegate':
                 symbol = f"{Colors.YELLOW}↓{Colors.RESET}"
                 target = event.get('delegator', '?')
-                # lockedTokens = amount in thawing period
                 thawing_tokens = format_tokens_short(event['tokens'])
                 remaining = int(event.get('remaining', '0')) / 1e18
                 remaining_str = f"{remaining:,.0f}" if remaining >= 1 else "0"
                 details = f"{Colors.YELLOW}{thawing_tokens} GRT thawing, {remaining_str} remaining{Colors.RESET}"
             else:
                 continue
-            
+
             print(f"  [{symbol}] {Colors.DIM}{ts}{Colors.RESET}  {target}  {details}")
     
     # Active allocations summary - use dedicated query for true top allocations
