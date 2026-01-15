@@ -38,6 +38,7 @@ from common import (
     format_timestamp, format_duration, print_section
 )
 from config import get_network_subgraph_url, get_ens_subgraph_url, get_rpc_url
+from contracts import HorizonStakingClient
 from ens_client import ENSClient
 from sync_status import IndexerStatusClient, format_sync_status as _format_sync_status
 from logger import setup_logging, get_logger
@@ -664,6 +665,17 @@ Examples:
     allocated = int(indexer.get('allocatedTokens', '0'))
     available_stake = int(indexer.get('availableStake', '0'))
     token_capacity = int(indexer.get('tokenCapacity', '0'))
+
+    # Workaround: fetch accurate tokenCapacity from contract
+    # The subgraph's tokenCapacity can be stale due to delegationExchangeRate not being updated
+    # See: https://github.com/graphprotocol/graph-network-subgraph/issues/323
+    rpc_url = get_rpc_url()
+    if rpc_url:
+        staking_client = HorizonStakingClient(rpc_url)
+        contract_capacity = staking_client.get_tokens_available(indexer_id)
+        if contract_capacity is not None and contract_capacity != token_capacity:
+            log.debug(f"Using contract tokenCapacity ({contract_capacity}) instead of subgraph ({token_capacity})")
+            token_capacity = contract_capacity
 
     # Delegations in thawing = delegated - delegatedCapacity
     delegations_thawing = delegated - delegated_capacity
