@@ -156,6 +156,7 @@ class TheGraphClient:
                 stakedTokens
                 delegatedTokens
                 delegatedCapacity
+                delegatedThawingTokens
                 allocatedTokens
                 availableStake
                 tokenCapacity
@@ -659,15 +660,19 @@ Examples:
     self_stake = int(indexer.get('stakedTokens', '0'))
     delegated = int(indexer.get('delegatedTokens', '0'))
     delegated_capacity = int(indexer.get('delegatedCapacity', '0'))
+    delegated_thawing = int(indexer.get('delegatedThawingTokens', '0'))
     allocated = int(indexer.get('allocatedTokens', '0'))
     available_stake = int(indexer.get('availableStake', '0'))
     token_capacity = int(indexer.get('tokenCapacity', '0'))
-    
+
     # Delegations in thawing = delegated - delegatedCapacity
     delegations_thawing = delegated - delegated_capacity
-    
-    # Use tokenCapacity for total usable stake (excludes thawing delegations)
-    total_stake = token_capacity if token_capacity > 0 else (self_stake + delegated)
+
+    # Effective capacity includes thawing delegations (still usable during 28-epoch thawing period)
+    effective_capacity = token_capacity + delegated_thawing
+
+    # Use effective capacity for total usable stake
+    total_stake = effective_capacity if effective_capacity > 0 else (self_stake + delegated)
     # Calculate remaining directly (can be negative if over-allocated)
     remaining = total_stake - allocated
     remaining_pct = (remaining / total_stake * 100) if total_stake > 0 else 0
@@ -675,9 +680,8 @@ Examples:
     # Delegation capacity (16x multiplier is the protocol default)
     delegation_ratio = 16
     max_delegation = self_stake * delegation_ratio
-    # Use delegated_capacity (active delegations) for remaining room
-    # Tokens in thawing are leaving, so they free up space
-    delegation_remaining = max(0, max_delegation - delegated_capacity)
+    # Tokens in thawing still occupy delegation slots until fully withdrawn
+    delegation_remaining = max(0, max_delegation - delegated)
     delegation_used_pct = (delegated / max_delegation * 100) if max_delegation > 0 else 0
     
     print(f"  Self stake:      {Colors.BRIGHT_GREEN}{format_tokens(str(self_stake))}{Colors.RESET}")
