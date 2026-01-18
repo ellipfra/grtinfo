@@ -269,8 +269,9 @@ def get_rpc_url() -> str:
     # Priority 1: Environment variable
     env_rpc = os.environ.get('ARBITRUM_RPC_URL') or os.environ.get('RPC_URL')
     if env_rpc:
+        log.debug(f"Using RPC URL from environment: {env_rpc}")
         return env_rpc.rstrip('/')
-    
+
     # Priority 2: Config file
     config_file = Path.home() / '.grtinfo' / 'config.json'
     if config_file.exists():
@@ -281,11 +282,17 @@ def get_rpc_url() -> str:
                     config = json.loads(content)
                     rpc_url = config.get('rpc_url') or config.get('arbitrum_rpc_url')
                     if rpc_url:
+                        log.debug(f"Using RPC URL from config: {rpc_url}")
                         return rpc_url.rstrip('/')
-        except:
-            pass
-    
+                    else:
+                        log.warning(f"Config file exists but no rpc_url found: {config_file}")
+        except Exception as e:
+            log.warning(f"Failed to read config file {config_file}: {e}")
+    else:
+        log.debug(f"Config file not found: {config_file}")
+
     # Priority 3: Default public RPC
+    log.warning("Using default public RPC (arb1.arbitrum.io) - configure rpc_url in ~/.grtinfo/config.json for better reliability")
     return "https://arb1.arbitrum.io/rpc"
 
 
@@ -293,6 +300,37 @@ def get_rpc_url() -> str:
 _accrued_rewards_cache: Dict[str, Optional[float]] = {}
 _cache_file = Path.home() / '.grtinfo' / 'accrued_rewards_cache.json'
 _cache_ttl = 3600  # 1 hour cache TTL
+
+# Cached Web3 instance to avoid creating too many connections
+_web3_instance: Optional[object] = None
+_web3_rpc_url: Optional[str] = None
+
+
+def get_web3_instance(rpc_url: Optional[str] = None) -> object:
+    """Get a cached Web3 instance to avoid connection exhaustion.
+
+    Args:
+        rpc_url: Optional RPC URL. If not provided, uses configured RPC.
+
+    Returns:
+        Web3 instance
+    """
+    global _web3_instance, _web3_rpc_url
+
+    from web3 import Web3
+
+    if rpc_url is None:
+        rpc_url = get_rpc_url()
+
+    # Reuse existing instance if same RPC URL
+    if _web3_instance is not None and _web3_rpc_url == rpc_url:
+        return _web3_instance
+
+    # Create new instance
+    _web3_instance = Web3(Web3.HTTPProvider(rpc_url))
+    _web3_rpc_url = rpc_url
+
+    return _web3_instance
 
 
 def _load_accrued_rewards_cache():
@@ -349,13 +387,9 @@ def get_accrued_rewards_from_contract(allocation_id: str, rpc_url: Optional[str]
     
     try:
         from web3 import Web3
-        
-        # Use provided RPC URL or get from config
-        if rpc_url is None:
-            rpc_url = get_rpc_url()
-        
-        w3 = Web3(Web3.HTTPProvider(rpc_url))
-        
+
+        w3 = get_web3_instance(rpc_url)
+
         # Contract addresses imported from contracts.py
         # Function selector for getRewards(address,address)
         selector = Web3.keccak(text="getRewards(address,address)")[:4].hex()
@@ -452,20 +486,17 @@ def get_delegator_total_balance_from_staking(delegator_id: str, indexer_id: str,
     try:
         from web3 import Web3
         from eth_abi import encode, decode
-        
-        if rpc_url is None:
-            rpc_url = get_rpc_url()
-        
-        w3 = Web3(Web3.HTTPProvider(rpc_url))
-        
+
+        w3 = get_web3_instance(rpc_url)
+
         # Contract address on Arbitrum One (Horizon Staking)
-        STAKING = "0x00669A4CF01450B64E8A2A20E9b1FCB71E61eF03"
-        
+        STAKING_ADDR = "0x00669A4CF01450B64E8A2A20E9b1FCB71E61eF03"
+
         # In Horizon, we need serviceProvider and verifier
         # The verifier is always the SubgraphService contract
-        SUBGRAPH_SERVICE = "0xb2Bb92d0DE618878E438b55D5846cfecD9301105"  # SubgraphService (verifier)
+        SUBGRAPH_SERVICE_ADDR = "0xb2Bb92d0DE618878E438b55D5846cfecD9301105"  # SubgraphService (verifier)
         service_provider = Web3.to_checksum_address(indexer_id)
-        verifier = Web3.to_checksum_address(SUBGRAPH_SERVICE)
+        verifier = Web3.to_checksum_address(SUBGRAPH_SERVICE_ADDR)
         
         try:
             # 1. Get delegator's shares: getDelegation(address serviceProvider, address verifier, address delegator)
@@ -478,7 +509,7 @@ def get_delegator_total_balance_from_staking(delegator_id: str, indexer_id: str,
             calldata_delegation = selector_get_delegation + encoded_params_delegation
             
             result_delegation = w3.eth.call({
-                "to": Web3.to_checksum_address(STAKING),
+                "to": Web3.to_checksum_address(STAKING_ADDR),
                 "data": calldata_delegation
             })
             
@@ -500,7 +531,7 @@ def get_delegator_total_balance_from_staking(delegator_id: str, indexer_id: str,
             calldata_pool = selector_get_pool + encoded_params_pool
             
             result_pool = w3.eth.call({
-                "to": Web3.to_checksum_address(STAKING),
+                "to": Web3.to_checksum_address(STAKING_ADDR),
                 "data": calldata_pool
             })
             
@@ -577,10 +608,7 @@ def get_delegation_pool_onchain(indexer_id: str, rpc_url: Optional[str] = None) 
         from web3 import Web3
         from eth_abi import encode, decode
 
-        if rpc_url is None:
-            rpc_url = get_rpc_url()
-
-        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        w3 = get_web3_instance(rpc_url)
 
         service_provider = Web3.to_checksum_address(indexer_id)
         verifier = Web3.to_checksum_address(SUBGRAPH_SERVICE)
@@ -603,8 +631,10 @@ def get_delegation_pool_onchain(indexer_id: str, rpc_url: Optional[str] = None) 
         return (pool_tokens, pool_shares)
 
     except ImportError:
+        log.warning("web3 module not installed - cannot fetch on-chain pool data")
         return None
-    except Exception:
+    except Exception as e:
+        log.warning(f"Failed to fetch delegation pool on-chain for {indexer_id}: {e}")
         return None
 
 
@@ -623,10 +653,7 @@ def get_delegator_shares_onchain(delegator_id: str, indexer_id: str, rpc_url: Op
         from web3 import Web3
         from eth_abi import encode, decode
 
-        if rpc_url is None:
-            rpc_url = get_rpc_url()
-
-        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        w3 = get_web3_instance(rpc_url)
 
         service_provider = Web3.to_checksum_address(indexer_id)
         verifier = Web3.to_checksum_address(SUBGRAPH_SERVICE)
@@ -647,8 +674,10 @@ def get_delegator_shares_onchain(delegator_id: str, indexer_id: str, rpc_url: Op
         return shares
 
     except ImportError:
+        log.warning("web3 module not installed - cannot fetch delegator shares on-chain")
         return None
-    except Exception:
+    except Exception as e:
+        log.warning(f"Failed to fetch delegator shares on-chain for {delegator_id} -> {indexer_id}: {e}")
         return None
 
 
@@ -1201,10 +1230,23 @@ Examples:
         # Calculate total accumulated (sum of positive accrued values)
         total_accumulated = sum(v for v in indexer_accrued_map.values() if v > 0)
         total_pending = sum(indexer_unrealized_map.values()) if indexer_unrealized_map else 0
-        
+
+        # Check if on-chain data was available for all ACTIVE indexers (not historical ones)
+        active_indexer_count = len(active_indexers_set)
+        fetched_active_count = sum(1 for idx in active_indexers_set if idx in indexer_accrued_map)
+        onchain_data_missing = active_indexer_count > 0 and fetched_active_count < active_indexer_count
+
         # Display Portfolio Summary
         print_section("Portfolio")
         total_value = total_staked + total_accumulated + total_locked
+
+        # Show warning if on-chain data couldn't be fetched for active indexers
+        if onchain_data_missing:
+            missing_count = active_indexer_count - fetched_active_count
+            print(f"  {Colors.RED}Warning: Could not fetch on-chain data for {missing_count} indexer(s).{Colors.RESET}")
+            print(f"  {Colors.RED}Accumulated rewards may be incomplete. Check RPC connection.{Colors.RESET}")
+            print()
+
         print(f"  {Colors.DIM}{'Staked':>20}  {'Accumulated':>20}  {'Thawing':>20}{Colors.RESET}")
         staked_str = format_tokens(str(total_staked))
         accumulated_str = format_tokens(str(total_accumulated))
