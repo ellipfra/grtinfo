@@ -532,28 +532,120 @@ def get_delegator_total_balance_from_staking(delegator_id: str, indexer_id: str,
 def get_delegator_total_rewards_from_contract(delegator_id: str, indexer_id: str, rpc_url: Optional[str] = None) -> Optional[float]:
     """Get total accrued rewards for a delegator from a specific indexer by summing all allocation rewards
     This includes rewards from both active and closed allocations
-    
+
     Args:
-        delegator_id: The delegator address  
+        delegator_id: The delegator address
         indexer_id: The indexer address
         rpc_url: Optional RPC URL
-    
+
     Returns:
         Total rewards in GRT, or None if failed
     """
     try:
         from web3 import Web3
-        
+
         if rpc_url is None:
             rpc_url = get_rpc_url()
-        
+
         w3 = Web3(Web3.HTTPProvider(rpc_url))
-        
+
         # Contract addresses imported from contracts.py
         # This function needs allocation IDs from subgraph to work
         # The logic would sum rewards from all allocations for this indexer
-        
+
         return None  # This approach needs allocation IDs from subgraph
+    except ImportError:
+        return None
+    except Exception:
+        return None
+
+
+def get_delegation_pool_onchain(indexer_id: str, rpc_url: Optional[str] = None) -> Optional[Tuple[int, int]]:
+    """Get delegation pool tokens and shares directly from the Horizon Staking contract.
+
+    The subgraph's delegatedTokens can be stale because delegationExchangeRate is not
+    updated when rewards accumulate in the pool. This fetches the accurate value on-chain.
+
+    Args:
+        indexer_id: The indexer address (serviceProvider)
+        rpc_url: Optional RPC URL
+
+    Returns:
+        Tuple of (pool_tokens, pool_shares) in wei, or None if failed
+    """
+    try:
+        from web3 import Web3
+        from eth_abi import encode, decode
+
+        if rpc_url is None:
+            rpc_url = get_rpc_url()
+
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+
+        service_provider = Web3.to_checksum_address(indexer_id)
+        verifier = Web3.to_checksum_address(SUBGRAPH_SERVICE)
+
+        # getDelegationPool(address serviceProvider, address verifier)
+        # Returns: (uint256 tokens, uint256 shares, uint256 tokensThawing, uint256 sharesThawing, uint256 thawingNonce)
+        selector = Web3.keccak(text="getDelegationPool(address,address)")[:4]
+        encoded_params = encode(['address', 'address'], [service_provider, verifier])
+        calldata = selector + encoded_params
+
+        result = w3.eth.call({
+            "to": Web3.to_checksum_address(STAKING),
+            "data": calldata
+        })
+
+        decoded = decode(['uint256', 'uint256', 'uint256', 'uint256', 'uint256'], result)
+        pool_tokens = decoded[0]
+        pool_shares = decoded[1]
+
+        return (pool_tokens, pool_shares)
+
+    except ImportError:
+        return None
+    except Exception:
+        return None
+
+
+def get_delegator_shares_onchain(delegator_id: str, indexer_id: str, rpc_url: Optional[str] = None) -> Optional[int]:
+    """Get delegator's shares directly from the Horizon Staking contract.
+
+    Args:
+        delegator_id: The delegator address
+        indexer_id: The indexer address (serviceProvider)
+        rpc_url: Optional RPC URL
+
+    Returns:
+        Delegator's shares in wei, or None if failed
+    """
+    try:
+        from web3 import Web3
+        from eth_abi import encode, decode
+
+        if rpc_url is None:
+            rpc_url = get_rpc_url()
+
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+
+        service_provider = Web3.to_checksum_address(indexer_id)
+        verifier = Web3.to_checksum_address(SUBGRAPH_SERVICE)
+        delegator_addr = Web3.to_checksum_address(delegator_id)
+
+        # getDelegation(address serviceProvider, address verifier, address delegator)
+        # Returns: (uint256 shares)
+        selector = Web3.keccak(text="getDelegation(address,address,address)")[:4]
+        encoded_params = encode(['address', 'address', 'address'], [service_provider, verifier, delegator_addr])
+        calldata = selector + encoded_params
+
+        result = w3.eth.call({
+            "to": Web3.to_checksum_address(STAKING),
+            "data": calldata
+        })
+
+        shares = decode(['uint256'], result)[0]
+        return shares
+
     except ImportError:
         return None
     except Exception:
@@ -1049,41 +1141,60 @@ Examples:
                     if indexer_total > 0:
                         indexer_total_rewards_map[indexer_id.lower()] = int(indexer_total * 1e18)
         
-        # Calculate accrued rewards from pool share value
-        # Accrued = (delegatedTokens * shareAmount / delegatorShares) - CURRENT_stakedTokens
-        # IMPORTANT: Use stakedTokens from analytics (current) not network (historical)
-        # Network subgraph includes undelegated amounts in stakedTokens
-        
-        # Build map of current stake from analytics
+        # Calculate accrued rewards from pool share value using ON-CHAIN data
+        # The subgraph's delegatedTokens can be stale because delegationExchangeRate
+        # is not updated when rewards accumulate in the pool.
+        # Formula: Accrued = (pool_tokens_onchain * my_shares_onchain / pool_shares_onchain) - original_stake
+
+        # Build map of original stake from analytics (sum of all delegation entries per indexer)
         analytics_stake_map = {}
         if analytics_client and analytics_stats:
             for stake in analytics_stats.get('stakes', []):
                 idx_id = stake.get('indexer', {}).get('id', '').lower()
                 if idx_id:
-                    analytics_stake_map[idx_id] = int(float(stake.get('stakedTokens', '0')))
-        
+                    staked = int(float(stake.get('stakedTokens', '0')))
+                    if idx_id in analytics_stake_map:
+                        analytics_stake_map[idx_id] += staked
+                    else:
+                        analytics_stake_map[idx_id] = staked
+
+        # Get unique indexers and aggregate subgraph stakes (fallback)
+        subgraph_stake_map = {}
+        unique_indexers = set()
         for d in delegations:
             indexer_id = d.get('indexer', {}).get('id')
-            if not indexer_id:
+            if indexer_id:
+                unique_indexers.add(indexer_id.lower())
+                staked = int(d.get('stakedTokens', '0'))
+                if indexer_id.lower() in subgraph_stake_map:
+                    subgraph_stake_map[indexer_id.lower()] += staked
+                else:
+                    subgraph_stake_map[indexer_id.lower()] = staked
+
+        # Fetch on-chain data for each unique indexer
+        for indexer_id_lower in unique_indexers:
+            # Get pool data from on-chain (accurate, includes accumulated rewards)
+            pool_data = get_delegation_pool_onchain(indexer_id_lower)
+            if pool_data is None:
+                # Fallback to subgraph data if on-chain call fails
                 continue
-            indexer_id_lower = indexer_id.lower()
-            
-            # Get pool info from network subgraph delegation
-            indexer_info = d.get('indexer', {})
-            pool_tokens = int(indexer_info.get('delegatedTokens', '0'))
-            pool_shares = int(indexer_info.get('delegatorShares', '0'))
-            my_shares = int(d.get('shareAmount', '0'))
-            
-            # Use CURRENT stake from analytics, not historical from network
-            current_stake = analytics_stake_map.get(indexer_id_lower, 0)
-            if current_stake == 0:
-                # Fallback to network if analytics not available
-                current_stake = int(d.get('stakedTokens', '0'))
-            
-            if pool_shares > 0 and my_shares > 0 and current_stake > 0:
-                # Calculate my actual balance in the pool
+
+            pool_tokens, pool_shares = pool_data
+
+            # Get delegator's shares from on-chain (accurate, aggregated)
+            my_shares = get_delegator_shares_onchain(delegator_id, indexer_id_lower)
+            if my_shares is None or my_shares == 0:
+                continue
+
+            # Use original stake from analytics, fallback to subgraph
+            original_stake = analytics_stake_map.get(indexer_id_lower, 0)
+            if original_stake == 0:
+                original_stake = subgraph_stake_map.get(indexer_id_lower, 0)
+
+            if pool_shares > 0 and my_shares > 0 and original_stake > 0:
+                # Calculate actual balance in the pool using on-chain data
                 my_balance = (pool_tokens * my_shares) // pool_shares
-                accrued = my_balance - current_stake
+                accrued = my_balance - original_stake
                 # Store all values (positive and negative)
                 indexer_accrued_map[indexer_id_lower] = accrued
         
