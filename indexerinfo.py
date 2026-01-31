@@ -179,6 +179,21 @@ class TheGraphClient:
         """
         result = self.query(query, {'id': indexer_id.lower()})
         return result.get('indexer')
+
+    def get_indexer_operators(self, indexer_id: str) -> List[Dict]:
+        """Get operators authorized to act on behalf of the indexer"""
+        query = """
+        query GetOperators($id: String!) {
+            graphAccount(id: $id) {
+                operators {
+                    id
+                }
+            }
+        }
+        """
+        result = self.query(query, {'id': indexer_id.lower()})
+        account = result.get('graphAccount') or {}
+        return account.get('operators', [])
     
     def get_indexer_allocations(self, indexer_id: str, hours: int = 48) -> Tuple[List[Dict], List[Dict]]:
         """Get active allocations and recent closed allocations for an indexer"""
@@ -655,7 +670,21 @@ Examples:
     
     if indexer.get('url'):
         print(f"{Colors.DIM}{indexer['url']}{Colors.RESET}")
-    
+
+    # Operators
+    operators = client.get_indexer_operators(indexer_id)
+    if operators:
+        print_section("Operators")
+        for op in operators:
+            op_addr = op.get('id', '?')
+            # Resolve ENS name for operator
+            op_ens = ens_client.resolve_address(op_addr) if ens_client else None
+            addr_link = terminal_link(f"https://arbiscan.io/address/{op_addr}", op_addr)
+            if op_ens:
+                print(f"  {Colors.BRIGHT_CYAN}{op_ens}{Colors.RESET} ({addr_link})")
+            else:
+                print(f"  {addr_link}")
+
     # Stake information
     print_section("Stake")
     self_stake = int(indexer.get('stakedTokens', '0'))
