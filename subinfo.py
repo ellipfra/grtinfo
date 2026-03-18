@@ -37,6 +37,7 @@ from config import get_network_subgraph_url, get_ens_subgraph_url, get_my_indexe
 from ens_client import ENSClient
 from sync_status import IndexerStatusClient, format_sync_status as _format_sync_status
 from rewards import get_accrued_rewards, get_indexer_reward_cut
+from contracts import AllocationResizeClient
 from logger import setup_logging, get_logger
 
 log = get_logger(__name__)
@@ -353,6 +354,32 @@ class TheGraphClient:
         except:
             return []
     
+    def resolve_deployment_id(self, ipfs_hash: str) -> Optional[str]:
+        """Resolve an IPFS hash to its deployment hex ID (bytes32).
+
+        Returns the 0x-prefixed hex ID, or None if not found.
+        """
+        if ipfs_hash.startswith('0x'):
+            return ipfs_hash
+        query = """
+        query FindSubgraphDeployment($ipfsHash: String!) {
+            subgraphDeployments(
+                where: { ipfsHash: $ipfsHash }
+                first: 1
+            ) {
+                id
+            }
+        }
+        """
+        try:
+            result = self.query(query, {'ipfsHash': ipfs_hash})
+            deployments = result.get('subgraphDeployments', [])
+            if deployments:
+                return deployments[0]['id']
+        except Exception:
+            pass
+        return None
+
     def get_allocation_history(self, subgraph_id: str, hours: int = 48) -> List[Dict]:
         """Get allocation history (created) for the last N hours"""
         cutoff_time = int((datetime.now() - timedelta(hours=hours)).timestamp())
@@ -831,7 +858,7 @@ class TheGraphClient:
                     orderDirection: desc
                 ) {
                     id
-                    signaller {
+                    curator {
                         id
                     }
                     signalledTokens
@@ -886,7 +913,7 @@ class TheGraphClient:
                                     id
                                     ipfsHash
                                     createdAt
-                                    signalAmount
+                                    signalledTokens
                                 }
                             }
                             versions(orderBy: createdAt, orderDirection: desc, first: 10) {
@@ -894,7 +921,7 @@ class TheGraphClient:
                                     id
                                     ipfsHash
                                     createdAt
-                                    signalAmount
+                                    signalledTokens
                                 }
                             }
                         }
@@ -907,6 +934,7 @@ class TheGraphClient:
                 deployments = find_result.get('subgraphDeployments', [])
                 if deployments:
                     old_deployment_id = deployments[0]['id']
+                    deployment_id = old_deployment_id
                     versions = deployments[0].get('versions', [])
                     if versions:
                         subgraph = versions[0].get('subgraph', {})
@@ -922,11 +950,9 @@ class TheGraphClient:
                                 'id': current_dep_id,
                                 'hash': current_dep_hash,
                                 'created': current_dep_created,
-                                'signal': current_deployment.get('signalAmount', '0')
+                                'signal': current_deployment.get('signalledTokens', '0')
                             }
-                            deployment_id = current_dep_id
                         else:
-                            deployment_id = old_deployment_id
                             new_deployment_info = None
                 else:
                     return []
@@ -1017,7 +1043,9 @@ class TheGraphClient:
                 signal_diff_wei = current_signal_wei - past_signal_wei
                 
                 if signal_diff_wei < -1000000000000000000:  # More than 1 GRT withdrawal
-                    withdrawal_amount_wei = abs(signal_diff_wei)
+                    # Account for known additions to compute true withdrawal amount
+                    already_detected_additions = sum(float(c.get('tokens', '0')) for c in changes if c.get('type') == 'signal')
+                    withdrawal_amount_wei = abs(signal_diff_wei) + already_detected_additions
                     withdrawal_amount_grt = withdrawal_amount_wei / 1e18
                     
                     if withdrawal_amount_grt > 1:
@@ -1056,7 +1084,7 @@ class TheGraphClient:
                 current_total_individual_wei = sum(float(sig.get('signalledTokens', '0')) for sig in current_signals)
                 log.debug(f"Time travel unavailable. Current deployment: {current_signal_wei/1e18:.2f} GRT, individual signals: {current_total_individual_wei/1e18:.2f} GRT")
             
-            # Check for subgraph upgrades
+            # Check for subgraph upgrades (always shown regardless of time window)
             if new_deployment_info is not None:
                 upgrade_exists = any(c.get('type') == 'upgrade_out' for c in changes)
                 if not upgrade_exists:
@@ -1066,12 +1094,12 @@ class TheGraphClient:
                         old_signal_query = f"""
                         {{
                             subgraphDeployment(id: "{old_deployment_id}") {{
-                                signalAmount
+                                signalledTokens
                             }}
                         }}
                         """
                         old_signal_result = self.query(old_signal_query)
-                        old_signal = old_signal_result.get('subgraphDeployment', {}).get('signalAmount', '0')
+                        old_signal = old_signal_result.get('subgraphDeployment', {}).get('signalledTokens', '0')
                     except:
                         old_signal = new_deployment_info['signal']
                     
@@ -1411,8 +1439,8 @@ def print_sync_status_summary(allocations: List[Dict], sync_statuses: Dict, ens_
             print(f"  {Colors.BRIGHT_RED}✗ {name}:{Colors.RESET} {Colors.DIM}{error}{Colors.RESET}")
 
 
-def print_allocations_timeline(allocations: List[Dict], unallocations: List[Dict], poi_submissions: List[Dict] = None, hours: int = 48, my_indexer_id: Optional[str] = None, ens_client: Optional[ENSClient] = None, indexers_stake_info: Optional[Dict] = None, indexer_urls: Optional[Dict[str, str]] = None):
-    """Display allocations, unallocations and reward collections in a chronological timeline with colors"""
+def print_allocations_timeline(allocations: List[Dict], unallocations: List[Dict], poi_submissions: List[Dict] = None, resizes: List[Dict] = None, hours: int = 48, my_indexer_id: Optional[str] = None, ens_client: Optional[ENSClient] = None, indexers_stake_info: Optional[Dict] = None, indexer_urls: Optional[Dict[str, str]] = None):
+    """Display allocations, unallocations, resizes and reward collections in a chronological timeline with colors"""
     print_section(f"Allocations/Unallocations Timeline ({hours}h)")
     
     # Create a combined list with event type
@@ -1459,7 +1487,18 @@ def print_allocations_timeline(allocations: List[Dict], unallocations: List[Dict
                     'rewards': rewards,
                     'status': 'Active'
                 })
-    
+
+    # Add allocation resizes
+    if resizes:
+        for resize in resizes:
+            events.append({
+                'type': 'resize',
+                'timestamp': resize['timestamp'],
+                'indexer': resize['indexer'],
+                'tokens': str(resize['new_tokens']),
+                'old_tokens': str(resize['old_tokens']),
+            })
+
     if not events:
         print(f"{Colors.DIM}No events found.{Colors.RESET}")
         return
@@ -1507,6 +1546,9 @@ def print_allocations_timeline(allocations: List[Dict], unallocations: List[Dict
             symbol = f"{Colors.BRIGHT_CYAN}${Colors.RESET}"
             status = "Collect"
             status_color = Colors.BRIGHT_CYAN
+        elif event['type'] == 'resize':
+            # Resize - don't add to totals, it's a change not an add/remove
+            symbol = f"{Colors.BRIGHT_YELLOW}~{Colors.RESET}"
         else:  # unallocation
             total_unallocated += amount
             symbol = f"{Colors.BRIGHT_RED}-{Colors.RESET}"
@@ -1535,6 +1577,13 @@ def print_allocations_timeline(allocations: List[Dict], unallocations: List[Dict
             rewards = event.get('rewards', 0) / 1e18
             rewards_str = f"{rewards:,.2f} GRT collected"
             print(f"  [{symbol}]{' ' * symbol_padding} {marker}{' ' * marker_padding}  {Colors.DIM}{timestamp}{Colors.RESET}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_CYAN}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  {status_color}{rewards_str}{Colors.RESET}")
+        elif event['type'] == 'resize':
+            old_amount = float(event.get('old_tokens', '0')) / 1e18
+            diff = amount - old_amount
+            sign = "+" if diff > 0 else ""
+            old_str = format_tokens(event.get('old_tokens', '0'))
+            resize_info = f"{Colors.DIM}\u2190 {old_str} ({sign}{diff:,.0f}){Colors.RESET}"
+            print(f"  [{symbol}]{' ' * symbol_padding} {marker}{' ' * marker_padding}  {Colors.DIM}{timestamp}{Colors.RESET}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_YELLOW}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  {resize_info}")
         else:  # unallocation
             created = format_timestamp(str(event.get('createdAt', '0')))[:16]
             # Show rewards collected at close
@@ -1798,7 +1847,19 @@ Example:
         
         # 7. Get POI submissions (reward collections for long-running allocations)
         poi_submissions = client.get_poi_submissions(args.subgraph_hash, args.hours)
-        
+
+        # 7b. Get allocation resizes via RPC
+        allocation_resizes = []
+        rpc_url = get_rpc_url()
+        if rpc_url:
+            deployment_hex_id = client.resolve_deployment_id(args.subgraph_hash)
+            if deployment_hex_id:
+                try:
+                    resize_client = AllocationResizeClient(rpc_url)
+                    allocation_resizes = resize_client.get_resizes_by_deployment(deployment_hex_id, args.hours)
+                except Exception as e:
+                    log.debug(f"Failed to fetch allocation resizes: {e}")
+
         # 8. Collect all indexer IDs and fetch their URLs (fallback for ENS)
         all_indexer_ids = set()
         for alloc in current_allocations:
@@ -1809,6 +1870,8 @@ Example:
             all_indexer_ids.add(unalloc.get('indexer', {}).get('id', ''))
         for poi in poi_submissions:
             all_indexer_ids.add(poi.get('allocation', {}).get('indexer', {}).get('id', ''))
+        for resize in allocation_resizes:
+            all_indexer_ids.add(resize['indexer'])
         all_indexer_ids.discard('')
         
         indexer_urls = client.get_indexers_urls(list(all_indexer_ids)) if all_indexer_ids else {}
@@ -1836,8 +1899,8 @@ Example:
             sync_statuses=sync_statuses, sync_errors=sync_errors
         )
         
-        # 12. Combined allocations/unallocations/collections timeline
-        print_allocations_timeline(allocation_history, unallocations, poi_submissions, args.hours, my_indexer_id, ens_client, indexers_stake_info, indexer_urls)
+        # 12. Combined allocations/unallocations/collections/resizes timeline
+        print_allocations_timeline(allocation_history, unallocations, poi_submissions, allocation_resizes, args.hours, my_indexer_id, ens_client, indexers_stake_info, indexer_urls)
         
         print()  # Final newline
         
