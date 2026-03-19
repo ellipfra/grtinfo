@@ -38,7 +38,7 @@ from common import (
     format_timestamp, format_duration, print_section
 )
 from config import get_network_subgraph_url, get_ens_subgraph_url, get_rpc_url
-from contracts import HorizonStakingClient
+from contracts import HorizonStakingClient, AllocationResizeClient
 from ens_client import ENSClient
 from sync_status import IndexerStatusClient, format_sync_status as _format_sync_status
 from logger import setup_logging, get_logger
@@ -952,7 +952,16 @@ Examples:
                 legacy_rewards_map = legacy_client.get_rewards_for_allocations(legacy_allocs, indexer_id)
             except Exception:
                 pass
-    
+
+    # Fetch allocation resizes via RPC
+    allocation_resizes = []
+    if rpc_url:
+        try:
+            resize_client = AllocationResizeClient(rpc_url)
+            allocation_resizes = resize_client.get_resizes_by_indexer(indexer_id, args.hours)
+        except Exception:
+            pass
+
     # Build timeline
     events = []
     
@@ -1034,8 +1043,26 @@ Examples:
             'delegator': delegator_id
         })
     
+    # Allocation resizes - map alloc_id to deployment info from all known allocations
+    if allocation_resizes:
+        alloc_deployment_map = {}
+        for alloc in active_allocs + closed_allocs:
+            aid = alloc.get('id', '').lower()
+            dep = alloc.get('subgraphDeployment', {})
+            alloc_deployment_map[aid] = dep
+        for resize in allocation_resizes:
+            dep = alloc_deployment_map.get(resize['alloc_id'].lower(), {})
+            events.append({
+                'type': 'resize',
+                'timestamp': resize['timestamp'],
+                'tokens': str(resize['new_tokens']),
+                'old_tokens': str(resize['old_tokens']),
+                'subgraph': dep.get('ipfsHash', '?'),
+                'subgraph_id': get_subgraph_id_from_deployment(dep)
+            })
+
     # Separate allocation events from delegation events
-    allocation_events = [e for e in events if e['type'] in ('allocate', 'unallocate', 'collect')]
+    allocation_events = [e for e in events if e['type'] in ('allocate', 'unallocate', 'collect', 'resize')]
     delegation_events = [e for e in events if e['type'] in ('delegate', 'undelegate')]
 
     if allocation_events:
@@ -1069,6 +1096,16 @@ Examples:
                 target = format_deployment_link(subgraph, subgraph_id) if subgraph != '?' else subgraph
                 rewards = event.get('rewards', 0) / 1e18
                 details = f"{rewards:,.0f} GRT collected"
+            elif event['type'] == 'resize':
+                symbol = f"{Colors.BRIGHT_YELLOW}~{Colors.RESET}"
+                subgraph = event.get('subgraph', '?')
+                subgraph_id = event.get('subgraph_id')
+                target = format_deployment_link(subgraph, subgraph_id) if subgraph != '?' else subgraph
+                old = float(event['old_tokens']) / 1e18
+                new = float(event['tokens']) / 1e18
+                diff = new - old
+                sign = "+" if diff > 0 else ""
+                details = f"{new:,.0f} GRT \u2190 {old:,.0f} ({sign}{diff:,.0f})"
             else:
                 continue
 

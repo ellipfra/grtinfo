@@ -28,6 +28,9 @@ REWARDS_CONTRACT = REWARDS_MANAGER
 # HorizonRewardAssigned(address indexed indexer, address indexed allocationID, uint256 amount)
 HORIZON_REWARD_ASSIGNED_TOPIC = "0xa111914d7f2ea8beca61d12f1a1f38c5533de5f1823c3936422df4404ac2ec68"
 
+# AllocationResized(address indexed indexer, address indexed allocationId, bytes32 indexed subgraphDeploymentId, uint256 newTokens, uint256 oldTokens)
+ALLOCATION_RESIZED_TOPIC = "0x6db4a6f9be2d5e72eb2a2af2374ac487971bf342a261ba0bc1cf471bf2a2c31f"
+
 
 # =============================================================================
 # Function Selectors (first 4 bytes of keccak256 of function signature)
@@ -110,7 +113,9 @@ def pad_address(address: str) -> str:
 # fetches the accurate value directly from the HorizonStaking contract.
 
 import requests
-from typing import Optional
+import time
+import logging
+from typing import Optional, List, Dict
 
 
 class HorizonStakingClient:
@@ -185,4 +190,165 @@ class HorizonStakingClient:
         if result:
             return self._decode_uint256(result)
         return None
+
+
+# =============================================================================
+# AllocationResizeClient - Fetch AllocationResized events from on-chain
+# =============================================================================
+
+log = logging.getLogger(__name__)
+
+
+class AllocationResizeClient:
+    """Client to fetch AllocationResized events from the SubgraphService contract via RPC.
+
+    The AllocationResized event is not exposed as an entity in the network subgraph,
+    so we query it directly via eth_getLogs.
+    """
+
+    # Arbitrum: ~0.25s per block = 4 blocks/second
+    BLOCKS_PER_SECOND = 4
+
+    def __init__(self, rpc_url: str):
+        self.rpc_url = rpc_url
+        self._session = requests.Session()
+
+    def _rpc_call(self, method: str, params: list):
+        """Make a JSON-RPC call."""
+        payload = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": 1,
+        }
+        response = self._session.post(self.rpc_url, json=payload, timeout=15)
+        response.raise_for_status()
+        result = response.json()
+        if "error" in result:
+            raise Exception(result["error"])
+        return result.get("result")
+
+    def _get_block_number(self) -> int:
+        result = self._rpc_call("eth_blockNumber", [])
+        return int(result, 16)
+
+    def _get_block_timestamps(self, block_numbers: List[int]) -> Dict[int, int]:
+        """Fetch timestamps for a set of block numbers via batch RPC."""
+        if not block_numbers:
+            return {}
+        unique_blocks = sorted(set(block_numbers))
+        # Batch RPC request
+        batch = [
+            {
+                "jsonrpc": "2.0",
+                "method": "eth_getBlockByNumber",
+                "params": [hex(bn), False],
+                "id": i,
+            }
+            for i, bn in enumerate(unique_blocks)
+        ]
+        try:
+            response = self._session.post(self.rpc_url, json=batch, timeout=30)
+            response.raise_for_status()
+            results = response.json()
+        except Exception as e:
+            log.debug(f"Failed to batch-fetch block timestamps: {e}")
+            return {}
+
+        timestamps = {}
+        for res in results:
+            if "result" in res and res["result"]:
+                block = res["result"]
+                bn = int(block["number"], 16)
+                timestamps[bn] = int(block["timestamp"], 16)
+        return timestamps
+
+    def _fetch_resizes(self, topics: list, hours: int = 48) -> List[Dict]:
+        """Core logic: fetch AllocationResized events matching the given topics."""
+        try:
+            current_block = self._get_block_number()
+        except Exception as e:
+            log.debug(f"Failed to get block number: {e}")
+            return []
+
+        from_block = max(0, current_block - int(hours * 3600 * self.BLOCKS_PER_SECOND))
+
+        try:
+            logs = self._rpc_call("eth_getLogs", [{
+                "address": SUBGRAPH_SERVICE,
+                "topics": topics,
+                "fromBlock": hex(from_block),
+                "toBlock": hex(current_block),
+            }])
+        except Exception as e:
+            log.warning(f"Failed to fetch AllocationResized logs: {e}")
+            return []
+
+        if not logs:
+            return []
+
+        # Parse events
+        events = []
+        block_numbers = []
+        for entry in logs:
+            block_num = int(entry["blockNumber"], 16)
+            block_numbers.append(block_num)
+
+            indexer = "0x" + entry["topics"][1][-40:]
+            alloc_id = "0x" + entry["topics"][2][-40:]
+            deployment_id = entry["topics"][3]
+
+            data = entry["data"]
+            # Remove 0x prefix, data = newTokens (32 bytes) + oldTokens (32 bytes)
+            data_hex = data[2:] if data.startswith("0x") else data
+            new_tokens = int(data_hex[:64], 16)
+            old_tokens = int(data_hex[64:128], 16)
+
+            events.append({
+                "block_number": block_num,
+                "indexer": indexer,
+                "alloc_id": alloc_id,
+                "deployment_id": deployment_id,
+                "new_tokens": new_tokens,
+                "old_tokens": old_tokens,
+            })
+
+        # Fetch block timestamps
+        timestamps = self._get_block_timestamps(block_numbers)
+        for event in events:
+            event["timestamp"] = timestamps.get(event["block_number"], 0)
+
+        # Filter out events where timestamp could not be resolved
+        if timestamps:
+            events = [e for e in events if e["timestamp"] > 0]
+        else:
+            # All timestamps failed — estimate from block number
+            now = int(time.time())
+            for event in events:
+                blocks_ago = current_block - event["block_number"]
+                event["timestamp"] = now - int(blocks_ago / self.BLOCKS_PER_SECOND)
+
+        return events
+
+    def get_resizes_by_deployment(self, deployment_hex_id: str, hours: int = 48) -> List[Dict]:
+        """Fetch AllocationResized events for a specific deployment.
+
+        Args:
+            deployment_hex_id: The deployment ID as 0x-prefixed bytes32 hex string
+            hours: Number of hours of history to fetch
+        """
+        # deployment_id is already bytes32, use as topic3
+        topics = [ALLOCATION_RESIZED_TOPIC, None, None, deployment_hex_id]
+        return self._fetch_resizes(topics, hours)
+
+    def get_resizes_by_indexer(self, indexer_id: str, hours: int = 48) -> List[Dict]:
+        """Fetch AllocationResized events for a specific indexer.
+
+        Args:
+            indexer_id: The indexer address (0x-prefixed)
+            hours: Number of hours of history to fetch
+        """
+        indexer_topic = pad_address(indexer_id)
+        topics = [ALLOCATION_RESIZED_TOPIC, indexer_topic]
+        return self._fetch_resizes(topics, hours)
 
