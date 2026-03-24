@@ -48,6 +48,9 @@ GET_TOKENS_AVAILABLE_SELECTOR = "0x872d0489"
 # HorizonStaking.getDelegationPool(address serviceProvider, address verifier) returns tuple
 GET_DELEGATION_POOL_SELECTOR = "0x561285e4"
 
+# HorizonStaking.getProvision(address serviceProvider, address verifier) returns (Provision)
+GET_PROVISION_SELECTOR = "0x25d9897e"
+
 # SubgraphService.getDelegationRatio() returns (uint32)
 GET_DELEGATION_RATIO_SELECTOR = "0x1ebb7c30"
 
@@ -190,6 +193,28 @@ class HorizonStakingClient:
         if result:
             return self._decode_uint256(result)
         return None
+
+    def get_provision(self, indexer_address: str) -> Optional[Dict]:
+        """Get provision data for an indexer from the HorizonStaking contract.
+
+        Returns a dict with 'tokens' (active stake) and 'tokensThawing',
+        or None if the call fails.
+        """
+        data = (
+            GET_PROVISION_SELECTOR
+            + self._encode_address(indexer_address)
+            + self._encode_address(SUBGRAPH_SERVICE)
+        )
+
+        result = self._eth_call(STAKING, data)
+        if not result or result == "0x" or len(result) < 130:  # need at least 2 slots (2 + 64*2)
+            return None
+
+        hex_data = result[2:] if result.startswith("0x") else result
+        return {
+            'tokens': int(hex_data[0:64], 16),
+            'tokensThawing': int(hex_data[64:128], 16),
+        }
 
 
 # =============================================================================

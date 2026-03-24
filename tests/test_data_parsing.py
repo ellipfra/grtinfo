@@ -31,8 +31,11 @@ from tests.fixtures.rpc_responses import (
     STATUS_FAILED, STATUS_NULL_CHAINS, STATUS_EMPTY_CHAINS,
     STATUS_NULL_BLOCKS, STATUS_MULTIPLE_DEPLOYMENTS, STATUS_EMPTY,
     SINGLE_REWARD_LOG, MULTIPLE_REWARDS_SAME_ALLOCATION,
-    REWARDS_MULTIPLE_ALLOCATIONS, EMPTY_LOGS
+    REWARDS_MULTIPLE_ALLOCATIONS, EMPTY_LOGS,
+    PROVISION_NO_THAWING, PROVISION_WITH_THAWING,
 )
+
+from contracts import HorizonStakingClient
 
 
 class TestIndexerDataParsing:
@@ -427,6 +430,54 @@ class TestTokenConversions:
         wei = "100000000000000"  # 0.0001 GRT
         grt = int(wei) / 1e18
         assert grt == pytest.approx(0.0001, rel=1e-6)
+
+
+class TestProvisionParsing:
+    """Tests for parsing HorizonStaking getProvision responses"""
+
+    def test_parse_provision_no_thawing(self):
+        """Test parsing provision with no thawing tokens"""
+        client = HorizonStakingClient("http://fake-rpc")
+        with patch.object(client, '_eth_call', return_value=PROVISION_NO_THAWING):
+            result = client.get_provision("0x" + "a" * 40)
+
+        assert result is not None
+        assert result['tokens'] == 10_000_862_000000000000000000
+        assert result['tokensThawing'] == 0
+
+    def test_parse_provision_with_thawing(self):
+        """Test parsing provision with large thawing amount"""
+        client = HorizonStakingClient("http://fake-rpc")
+        with patch.object(client, '_eth_call', return_value=PROVISION_WITH_THAWING):
+            result = client.get_provision("0x" + "a" * 40)
+
+        assert result is not None
+        assert result['tokensThawing'] / 1e18 == pytest.approx(10_084_699, rel=1e-6)
+
+    def test_provision_rpc_failure(self):
+        """Test get_provision returns None on RPC failure"""
+        client = HorizonStakingClient("http://fake-rpc")
+        with patch.object(client, '_eth_call', return_value=None):
+            result = client.get_provision("0x" + "a" * 40)
+
+        assert result is None
+
+    def test_provision_empty_response(self):
+        """Test get_provision returns None on empty/short response"""
+        client = HorizonStakingClient("http://fake-rpc")
+        with patch.object(client, '_eth_call', return_value="0x"):
+            result = client.get_provision("0x" + "a" * 40)
+
+        assert result is None
+
+    def test_provision_short_response(self):
+        """Test get_provision returns None when response has fewer than 2 slots"""
+        short = "0x" + "0" * 64  # Only 1 slot
+        client = HorizonStakingClient("http://fake-rpc")
+        with patch.object(client, '_eth_call', return_value=short):
+            result = client.get_provision("0x" + "a" * 40)
+
+        assert result is None
 
 
 if __name__ == '__main__':

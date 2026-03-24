@@ -113,6 +113,43 @@ DUST_REWARD_LOG = [
 
 
 # =============================================================================
+# PROVISION RESPONSES (for getProvision)
+# =============================================================================
+
+def create_provision_result(tokens_wei: int, tokens_thawing_wei: int):
+    """Create a mock eth_call result for getProvision() — only first 2 slots needed"""
+    def to_slot(val):
+        return hex(val)[2:].zfill(64)
+
+    # Provision struct has 10 ABI slots; we encode all for realism
+    return "0x" + "".join([
+        to_slot(tokens_wei),            # slot 0: tokens
+        to_slot(tokens_thawing_wei),    # slot 1: tokensThawing
+        to_slot(0),                      # slot 2: sharesThawing
+        to_slot(500000),                 # slot 3: maxVerifierCut
+        to_slot(2419200),                # slot 4: thawingPeriod (28 days)
+        to_slot(1634567890),             # slot 5: createdAt
+        to_slot(500000),                 # slot 6: maxVerifierCutPending
+        to_slot(2419200),                # slot 7: thawingPeriodPending
+        to_slot(0),                      # slot 8: lastParametersStagedAt
+        to_slot(0),                      # slot 9: thawingNonce
+    ])
+
+
+# Normal indexer — no thawing
+PROVISION_NO_THAWING = create_provision_result(
+    tokens_wei=10_000_862_000000000000000000,  # ~10M GRT
+    tokens_thawing_wei=0,
+)
+
+# Indexer unstaking — most of self-stake is thawing
+PROVISION_WITH_THAWING = create_provision_result(
+    tokens_wei=10_084_701_000000000000000000,  # ~10M GRT total
+    tokens_thawing_wei=10_084_699_000000000000000000,  # ~10M GRT thawing
+)
+
+
+# =============================================================================
 # MULTICALL RESPONSES (for accrued rewards)
 # =============================================================================
 

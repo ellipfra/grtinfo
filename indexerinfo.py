@@ -699,12 +699,15 @@ Examples:
     # The subgraph's tokenCapacity can be stale due to delegationExchangeRate not being updated
     # See: https://github.com/graphprotocol/graph-network-subgraph/issues/323
     rpc_url = get_rpc_url()
+    self_stake_thawing = 0
     if rpc_url:
         staking_client = HorizonStakingClient(rpc_url)
         contract_capacity = staking_client.get_tokens_available(indexer_id)
         if contract_capacity is not None and contract_capacity != token_capacity:
             log.debug(f"Using contract tokenCapacity ({contract_capacity}) instead of subgraph ({token_capacity})")
             token_capacity = contract_capacity
+        provision = staking_client.get_provision(indexer_id)
+        self_stake_thawing = provision.get('tokensThawing', 0) if provision else 0
 
     # Delegations in thawing = delegated - delegatedCapacity
     delegations_thawing = delegated - delegated_capacity
@@ -723,7 +726,10 @@ Examples:
     delegation_remaining = max(0, max_delegation - delegated)
     delegation_used_pct = (delegated / max_delegation * 100) if max_delegation > 0 else 0
     
-    print(f"  Self stake:      {Colors.BRIGHT_GREEN}{format_tokens(str(self_stake))}{Colors.RESET}")
+    self_stake_str = f"{Colors.BRIGHT_GREEN}{format_tokens(str(self_stake))}{Colors.RESET}"
+    if self_stake_thawing > 0:
+        self_stake_str += f" {Colors.DIM}({format_tokens(str(self_stake_thawing))} thawing){Colors.RESET}"
+    print(f"  Self stake:      {self_stake_str}")
     delegated_str = f"{Colors.BRIGHT_CYAN}{format_tokens(str(delegated))}{Colors.RESET} / {format_tokens(str(max_delegation))} ({delegation_used_pct:.0f}%)"
     if delegations_thawing > 0:
         delegated_str += f" {Colors.DIM}({format_tokens(str(delegations_thawing))} thawing){Colors.RESET}"
@@ -732,7 +738,10 @@ Examples:
         print(f"  Delegation room: {Colors.BRIGHT_GREEN}{format_tokens(str(delegation_remaining))}{Colors.RESET}")
     else:
         print(f"  Delegation room: {Colors.BRIGHT_RED}FULL{Colors.RESET}")
-    print(f"  {Colors.BOLD}Total:           {format_tokens(str(total_stake))}{Colors.RESET}")
+    total_str = f"{Colors.BOLD}Total:           {format_tokens(str(total_stake))}{Colors.RESET}"
+    if self_stake_thawing > 0:
+        total_str += f" {Colors.DIM}(net){Colors.RESET}"
+    print(f"  {total_str}")
     print(f"  Allocated:       {format_tokens(str(allocated))}")
     if remaining < 0:
         # Over-allocated - show warning
