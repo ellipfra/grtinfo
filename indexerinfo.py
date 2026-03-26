@@ -774,6 +774,106 @@ Examples:
     print(f"  Indexing rewards: {Colors.BRIGHT_CYAN}{raw_reward_cut*100:.1f}%{Colors.RESET} raw, {Colors.BRIGHT_YELLOW}{effective_reward_cut*100:.1f}%{Colors.RESET} effective on delegators")
     print(f"  Query fees:       {Colors.BRIGHT_CYAN}{raw_query_cut*100:.1f}%{Colors.RESET} raw, {Colors.BRIGHT_YELLOW}{effective_query_cut*100:.1f}%{Colors.RESET} effective on delegators")
     
+    # APY via subgraph time-travel
+    # Delegator: exchange rate (delegatedTokens - delegatedThawingTokens) / delegatorShares
+    # Indexer: direct from indexerIndexingRewards + (queryFeesCollected - delegatorQueryFees)
+    if rpc_url and delegated > 0:
+        from subinfo import get_current_block_number
+        current_block = get_current_block_number(rpc_url)
+
+        if current_block is not None:
+            blocks_per_day = 4 * 3600 * 24  # Arbitrum ~4 blocks/sec
+            _apy_fragment = (
+                "delegatedTokens delegatorShares delegatedThawingTokens "
+                "indexerIndexingRewards queryFeesCollected delegatorQueryFees stakedTokens "
+                "rewardsDestination"
+            )
+
+            def _sg_snapshot(block_num=None):
+                block_clause = f', block: {{ number: {block_num} }}' if block_num else ''
+                q = f'{{ indexer(id: "{indexer_id.lower()}"{block_clause}) {{ {_apy_fragment} }} }}'
+                result = client.query(q)
+                idx = result.get('indexer')
+                if not idx:
+                    return None
+                snap = {k: float(idx.get(k, '0')) for k in [
+                    'delegatedTokens', 'delegatorShares', 'delegatedThawingTokens',
+                    'indexerIndexingRewards', 'queryFeesCollected', 'delegatorQueryFees', 'stakedTokens',
+                ]}
+                snap['rewardsDestination'] = idx.get('rewardsDestination')
+                return snap
+
+            snap_now = _sg_snapshot()
+            if snap_now and snap_now['delegatorShares'] > 0:
+                current_rate = (snap_now['delegatedTokens'] - snap_now['delegatedThawingTokens']) / snap_now['delegatorShares']
+
+                # Indexer rewards compound only when rewardsDestination is unset (address(0))
+                # When set, rewards are sent externally → use linear APR instead of compound APY
+                rewards_dest = snap_now.get('rewardsDestination')
+                idx_compounds = not rewards_dest or rewards_dest == '0x0000000000000000000000000000000000000000'
+
+                na = f"{Colors.BOLD}{{}}d:{Colors.RESET} {Colors.DIM}N/A{Colors.RESET}"
+                deleg_parts, deleg_qf_parts = [], []
+                idx_parts, idx_qf_parts = [], []
+
+                def _fmt_annualized(yld, days, compound, decimals=2):
+                    if compound:
+                        val = ((1 + yld) ** (365 / days) - 1) * 100
+                    else:
+                        val = yld * (365 / days) * 100
+                    color = Colors.BRIGHT_GREEN if val >= 0 else Colors.BRIGHT_RED
+                    return f"{Colors.BOLD}{days}d:{Colors.RESET} {color}{val:.{decimals}f}%{Colors.RESET}", val
+
+                for days in [30, 60, 90]:
+                    past_block = max(0, current_block - (days * blocks_per_day))
+                    snap_past = _sg_snapshot(past_block)
+                    if not snap_past or snap_past['delegatorShares'] == 0:
+                        for lst in [deleg_parts, deleg_qf_parts, idx_parts, idx_qf_parts]:
+                            lst.append(na.format(days))
+                        continue
+
+                    # Delegator total APY from exchange rate (exact, always compounds in pool)
+                    past_rate = (snap_past['delegatedTokens'] - snap_past['delegatedThawingTokens']) / snap_past['delegatorShares']
+                    if past_rate > 0:
+                        d_apy = ((current_rate / past_rate) ** (365 / days) - 1) * 100
+                        color = Colors.BRIGHT_GREEN if d_apy >= 0 else Colors.BRIGHT_RED
+                        deleg_parts.append(f"{Colors.BOLD}{days}d:{Colors.RESET} {color}{d_apy:.2f}%{Colors.RESET}")
+                    else:
+                        deleg_parts.append(na.format(days))
+
+                    # Delegator QF APY from cumulative counters (always compounds in pool)
+                    net_deleg_past = snap_past['delegatedTokens'] - snap_past['delegatedThawingTokens']
+                    if net_deleg_past > 0:
+                        dqf_yield = (snap_now['delegatorQueryFees'] - snap_past['delegatorQueryFees']) / net_deleg_past
+                        s, _ = _fmt_annualized(dqf_yield, days, compound=True)
+                        deleg_qf_parts.append(s)
+                    else:
+                        deleg_qf_parts.append(na.format(days))
+
+                    # Indexer: APY if compounding, APR if rewards sent externally
+                    stake_past = snap_past['stakedTokens']
+                    if stake_past > 0:
+                        idx_indexing = snap_now['indexerIndexingRewards'] - snap_past['indexerIndexingRewards']
+                        idx_query = (snap_now['queryFeesCollected'] - snap_past['queryFeesCollected']) - (snap_now['delegatorQueryFees'] - snap_past['delegatorQueryFees'])
+
+                        s, _ = _fmt_annualized((idx_indexing + idx_query) / stake_past, days, compound=idx_compounds, decimals=1)
+                        idx_parts.append(s)
+                        s, _ = _fmt_annualized(idx_query / stake_past, days, compound=idx_compounds, decimals=1)
+                        idx_qf_parts.append(s)
+                    else:
+                        idx_parts.append(na.format(days))
+                        idx_qf_parts.append(na.format(days))
+
+                if any('N/A' not in p for p in deleg_parts + idx_parts):
+                    idx_label = "APY" if idx_compounds else "APR"
+                    print_section(f"Historical (Delegators APY, Indexer {idx_label})")
+                    print(f"  Delegators:    {' | '.join(deleg_parts)}")
+                    if any('0.00%' not in p and 'N/A' not in p for p in deleg_qf_parts):
+                        print(f"    of which QF: {' | '.join(deleg_qf_parts)}")
+                    print(f"  Indexer:       {' | '.join(idx_parts)}")
+                    if any('0.0%' not in p and 'N/A' not in p for p in idx_qf_parts):
+                        print(f"    of which QF: {' | '.join(idx_qf_parts)}")
+
     # Estimated APR calculation (based on current allocations)
     print_section("Instant APR (current allocations)")
     network_stats = client.get_network_stats()

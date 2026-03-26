@@ -132,12 +132,12 @@ class HorizonStakingClient:
         self.rpc_url = rpc_url
         self._delegation_ratio: Optional[int] = None
 
-    def _eth_call(self, to: str, data: str) -> Optional[str]:
-        """Make an eth_call to the contract."""
+    def _eth_call(self, to: str, data: str, block: str = "latest") -> Optional[str]:
+        """Make an eth_call to the contract at a given block."""
         payload = {
             "jsonrpc": "2.0",
             "method": "eth_call",
-            "params": [{"to": to, "data": data}, "latest"],
+            "params": [{"to": to, "data": data}, block],
             "id": 1,
         }
         try:
@@ -214,6 +214,30 @@ class HorizonStakingClient:
         return {
             'tokens': int(hex_data[0:64], 16),
             'tokensThawing': int(hex_data[64:128], 16),
+        }
+
+    def get_delegation_pool_at_block(self, indexer_address: str, block_number: int) -> Optional[Dict]:
+        """Get delegation pool data at a specific block number.
+
+        Returns dict with 'tokens', 'shares', 'tokensThawing', 'sharesThawing'
+        (all in wei), or None if the call fails.
+        """
+        call_data = (
+            GET_DELEGATION_POOL_SELECTOR
+            + self._encode_address(indexer_address)
+            + self._encode_address(SUBGRAPH_SERVICE)
+        )
+
+        result = self._eth_call(STAKING, call_data, hex(block_number))
+        if not result or result == "0x" or len(result) < 258:  # need 4 x uint256
+            return None
+
+        hex_data = result[2:] if result.startswith("0x") else result
+        return {
+            'tokens': int(hex_data[0:64], 16),
+            'shares': int(hex_data[64:128], 16),
+            'tokensThawing': int(hex_data[128:192], 16),
+            'sharesThawing': int(hex_data[192:256], 16),
         }
 
 

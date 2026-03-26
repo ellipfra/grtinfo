@@ -592,7 +592,7 @@ class TheGraphClient:
                 pass
         
         return results
-    
+
     def get_indexers_urls(self, indexer_ids: List[str]) -> Dict[str, str]:
         """Get URLs for multiple indexers (fallback when ENS is not available)"""
         if not indexer_ids:
@@ -1901,7 +1901,7 @@ Example:
         
         # 12. Combined allocations/unallocations/collections/resizes timeline
         print_allocations_timeline(allocation_history, unallocations, poi_submissions, allocation_resizes, args.hours, my_indexer_id, ens_client, indexers_stake_info, indexer_urls)
-        
+
         print()  # Final newline
         
     except requests.exceptions.RequestException as e:
