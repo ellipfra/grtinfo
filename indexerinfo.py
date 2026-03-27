@@ -999,17 +999,17 @@ Examples:
                         max_reward = max(b['rewards'] for b in epoch_buckets.values()) if epoch_buckets else 0
                         bar_width = 30
                         
-                        # Group epochs into buckets: expired (<0), 0, 1-3, 4-7, 8-14, 15-21, 22-28
+                        # Group epochs into buckets: exp+0d, 1-7d, 8d, 9d, 10-14d, 15-21d, 22-28d
                         # Note: negative epochs means allocation is past max age (should have been closed)
                         # Use -9999 to catch all expired allocations regardless of how old
-                        bucket_ranges = [(-9999, -1), (0, 0), (1, 3), (4, 7), (8, 14), (15, 21), (22, 28)]
-                        bucket_labels = ["exp!", "0d", "1-3d", "4-7d", "8-14d", "15-21d", "22-28d"]
+                        bucket_ranges = [(-9999, 0), (1, 7), (8, 8), (9, 9), (10, 14), (15, 21), (22, 28)]
+                        bucket_labels = ["exp+0d", "1-7d", "8d", "9d", "10-14d", "15-21d", "22-28d"]
                         
                         for (start, end), label_text in zip(bucket_ranges, bucket_labels):
-                            # For expired bucket, sum all negative epochs
+                            # For expired+0d bucket, sum all epochs <= 0
                             if start < -100:
-                                bucket_rewards = sum(v['rewards'] for k, v in epoch_buckets.items() if k < 0)
-                                bucket_count = sum(v['count'] for k, v in epoch_buckets.items() if k < 0)
+                                bucket_rewards = sum(v['rewards'] for k, v in epoch_buckets.items() if k <= 0)
+                                bucket_count = sum(v['count'] for k, v in epoch_buckets.items() if k <= 0)
                             else:
                                 bucket_rewards = sum(epoch_buckets.get(e, {}).get('rewards', 0) for e in range(start, end + 1))
                                 bucket_count = sum(epoch_buckets.get(e, {}).get('count', 0) for e in range(start, end + 1))
@@ -1018,8 +1018,8 @@ Examples:
                             if end <= 0:
                                 color = Colors.BRIGHT_RED  # Expired or expiring today - CRITICAL
                                 prefix = "⚠️ "  # emoji (2 visual cells) + space = 3 visual cells
-                            elif start <= 3:
-                                color = Colors.BRIGHT_YELLOW  # 1-3 days - soon
+                            elif end <= 7:
+                                color = Colors.BRIGHT_YELLOW  # 1-7 days - soon
                                 prefix = "⏰ "  # emoji (2 visual cells) + space = 3 visual cells
                             else:
                                 color = Colors.BRIGHT_GREEN  # Safe
