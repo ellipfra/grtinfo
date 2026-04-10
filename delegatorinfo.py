@@ -943,7 +943,8 @@ Examples:
             indexer_stake_agg[idx_id]['locked'] += locked
         
         # Calculate real totals
-        total_staked = sum(t['staked'] for t in indexer_stake_agg.values() if t['staked'] > 0 and t['locked'] == 0)
+        # Include staked tokens even when the indexer also has locked (thawing) tokens
+        total_staked = sum(t['staked'] for t in indexer_stake_agg.values() if t['staked'] > 0)
         total_locked = sum(t['locked'] for t in indexer_stake_agg.values() if t['locked'] > 0)
     
     # Display summary will be printed after we calculate accumulated rewards
@@ -979,17 +980,15 @@ Examples:
             except (ValueError, TypeError):
                 continue
         
-        # Only include indexers with net positive staked tokens and no locked tokens
+        # Include indexers with net positive staked tokens (even if also thawing)
         for indexer_id, totals in indexer_stake_totals.items():
             net_staked = totals['staked']
-            net_locked = totals['locked']
-            
-            # Active if net staked > 0 and not thawing
-            if net_staked > 0 and net_locked == 0:
+
+            if net_staked > 0:
                 active_delegations_list.append({
                     'indexer': {'id': indexer_id},
                     'stakedTokens': str(net_staked),
-                    'lockedTokens': '0',
+                    'lockedTokens': str(totals['locked']),
                     'lastUndelegatedAt': None
                 })
                 active_indexers_set.add(indexer_id.lower())
@@ -1176,16 +1175,20 @@ Examples:
         # Formula: Accrued = (pool_tokens_onchain * my_shares_onchain / pool_shares_onchain) - original_stake
 
         # Build map of original stake from analytics (sum of all delegation entries per indexer)
+        # Include both stakedTokens and lockedTokens (thawing) since the on-chain balance
+        # returned by getDelegationPool includes both active and thawing tokens
         analytics_stake_map = {}
         if analytics_client and analytics_stats:
             for stake in analytics_stats.get('stakes', []):
                 idx_id = stake.get('indexer', {}).get('id', '').lower()
                 if idx_id:
                     staked = int(float(stake.get('stakedTokens', '0')))
+                    locked = int(float(stake.get('lockedTokens', '0')))
+                    total = staked + locked
                     if idx_id in analytics_stake_map:
-                        analytics_stake_map[idx_id] += staked
+                        analytics_stake_map[idx_id] += total
                     else:
-                        analytics_stake_map[idx_id] = staked
+                        analytics_stake_map[idx_id] = total
 
         # Get unique indexers and aggregate subgraph stakes (fallback)
         subgraph_stake_map = {}
@@ -1195,10 +1198,12 @@ Examples:
             if indexer_id:
                 unique_indexers.add(indexer_id.lower())
                 staked = int(d.get('stakedTokens', '0'))
+                locked = int(d.get('lockedTokens', '0'))
+                total = staked + locked
                 if indexer_id.lower() in subgraph_stake_map:
-                    subgraph_stake_map[indexer_id.lower()] += staked
+                    subgraph_stake_map[indexer_id.lower()] += total
                 else:
-                    subgraph_stake_map[indexer_id.lower()] = staked
+                    subgraph_stake_map[indexer_id.lower()] = total
 
         # Fetch on-chain data for each unique indexer
         for indexer_id_lower in unique_indexers:
