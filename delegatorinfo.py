@@ -147,11 +147,9 @@ class TheGraphClient:
                     staked = int(d.get('stakedTokens', '0'))
                     locked = int(d.get('lockedTokens', '0'))
                     last_undelegated = d.get('lastUndelegatedAt')
-                    if staked == 0 or last_undelegated is not None:
+                    if staked == 0 or last_undelegated is not None or locked > 0:
                         return False
-                    indexer_dels = all_indexer_delegations.get(indexer_id, [])
-                    has_recent_undelegation = any(int(del_item.get('lockedTokens', '0')) > 0 for del_item in indexer_dels)
-                    return not has_recent_undelegation
+                    return True
                 
                 delegations = [d for d in delegations if is_active_delegation(d, indexer_delegations)]
             
@@ -804,13 +802,16 @@ Examples:
         # 2. It has never been undelegated (lastUndelegatedAt is None)
         # 3. It doesn't have locked tokens (lockedTokens == 0)
         # 4. It has positive shares (shareAmount > 0) - important for detecting cancelled delegations
-        if staked == 0 or last_undelegated is not None or locked > 0:
+        if staked == 0 or last_undelegated is not None:
             return False
-        
+
         # Check shares - if 0 or negative, the delegation is not truly active
         # This happens when there's a matching thawing entry that cancels the shares
         if shares <= 0:
             return False
+
+        # A delegation entry with locked > 0 but staked > 0 has both active and thawing portions
+        # Include it as active (the thawing section handles the locked portion separately)
         
         return True
     
@@ -890,8 +891,8 @@ Examples:
                 except (ValueError, TypeError):
                     pass
                 
-                # Get unrealized rewards (only from active stakes: stakedTokens > 0 and lockedTokens == 0)
-                if staked_tokens > 0 and locked_tokens == 0:
+                # Get unrealized rewards (from active stakes: stakedTokens > 0, even if also thawing)
+                if staked_tokens > 0:
                     unrealized_rewards_str = stake.get('unrealizedRewards', '0')
                     try:
                         # Convert decimal string to int (it's already in wei)
@@ -1058,13 +1059,13 @@ Examples:
                 query = """
                 query GetClosedAllocations($indexers: [String!]!, $skip: Int!) {
                     allocations(
-                        where: { 
-                            indexer_in: $indexers, 
+                        where: {
+                            indexer_in: $indexers,
                             status: Closed
                         }
                         orderBy: closedAt
                         orderDirection: desc
-                        first: $batch_size
+                        first: 1000
                         skip: $skip
                     ) {
                         id
@@ -1081,7 +1082,7 @@ Examples:
                     }
                 }
                 """
-                result = client.query(query, {'indexers': active_indexer_ids, 'skip': skip, 'batch_size': batch_size})
+                result = client.query(query, {'indexers': active_indexer_ids, 'skip': skip})
                 batch = result.get('allocations', [])
                 if not batch:
                     break

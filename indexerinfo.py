@@ -762,11 +762,12 @@ Examples:
     raw_reward_cut = reward_cut_ppm / 1_000_000  # Convert PPM to decimal
     raw_query_cut = query_cut_ppm / 1_000_000
     
-    # Calculate effective cut on delegators using raw stake values (not adjusted for thawing)
-    raw_total = self_stake + delegated
-    if delegated > 0:
-        effective_reward_cut = 1 - (1 - raw_reward_cut) * raw_total / delegated
-        effective_query_cut = 1 - (1 - raw_query_cut) * raw_total / delegated
+    # Calculate effective cut on delegators using active delegation (excluding thawing)
+    net_delegated = delegated - delegated_thawing
+    raw_total = self_stake + net_delegated
+    if net_delegated > 0:
+        effective_reward_cut = 1 - (1 - raw_reward_cut) * raw_total / net_delegated
+        effective_query_cut = 1 - (1 - raw_query_cut) * raw_total / net_delegated
     else:
         effective_reward_cut = raw_reward_cut
         effective_query_cut = raw_query_cut
@@ -911,15 +912,15 @@ Examples:
         
         # Convert stake values from wei to GRT for APR calculation
         self_stake_grt = self_stake / 1e18
-        delegated_grt = delegated / 1e18
-        
-        # Calculate APRs
+        net_delegated_grt = (delegated - delegated_thawing) / 1e18
+
+        # Calculate APRs (use net delegated excluding thawing, since thawing tokens don't earn rewards)
         if total_expected_rewards > 0:
             indexer_rewards = total_expected_rewards * raw_reward_cut
             delegator_rewards = total_expected_rewards * (1 - raw_reward_cut)
-            
+
             apr_indexer = (indexer_rewards / self_stake_grt) * 100 if self_stake_grt > 0 else 0
-            apr_delegators = (delegator_rewards / delegated_grt) * 100 if delegated_grt > 0 else 0
+            apr_delegators = (delegator_rewards / net_delegated_grt) * 100 if net_delegated_grt > 0 else 0
             
             print(f"  Expected rewards: {Colors.BRIGHT_CYAN}{total_expected_rewards:,.0f} GRT/year{Colors.RESET}")
             print(f"  Indexer share ({raw_reward_cut*100:.1f}%): {indexer_rewards:,.0f} GRT/year")
