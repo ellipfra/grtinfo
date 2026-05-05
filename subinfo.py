@@ -569,6 +569,8 @@ class TheGraphClient:
                     stakedTokens
                     delegatedTokens
                     allocatedTokens
+                    availableStake
+                    tokenCapacity
                 }
             }
             """
@@ -579,12 +581,15 @@ class TheGraphClient:
                     staked = float(indexer.get('stakedTokens', '0')) / 1e18
                     delegated = float(indexer.get('delegatedTokens', '0')) / 1e18
                     allocated = float(indexer.get('allocatedTokens', '0')) / 1e18
-                    total_stake = staked + delegated
-                    unallocated_pct = ((total_stake - allocated) / total_stake * 100) if total_stake > 0 else 0
+                    # availableStake / tokenCapacity already exclude thawing tokens,
+                    # so they reflect actual unallocated capacity (not stake being withdrawn).
+                    available = max(0.0, float(indexer.get('availableStake', '0')) / 1e18)
+                    capacity = float(indexer.get('tokenCapacity', '0')) / 1e18
+                    unallocated_pct = (available / capacity * 100) if capacity > 0 else 0
                     results[indexer_id] = {
                         'staked': staked,
                         'delegated': delegated,
-                        'total_stake': total_stake,
+                        'total_stake': capacity if capacity > 0 else (staked + delegated),
                         'allocated': allocated,
                         'unallocated_pct': unallocated_pct
                     }
