@@ -441,6 +441,7 @@ class TheGraphClient:
                 id
                 delegator {{ id }}
                 stakedTokens
+                shareAmount
                 createdAt
                 lastDelegatedAt
             }}
@@ -462,6 +463,7 @@ class TheGraphClient:
                 delegator {{ id }}
                 stakedTokens
                 lockedTokens
+                shareAmount
                 lastUndelegatedAt
             }}
         }}
@@ -613,16 +615,25 @@ Examples:
     search_term = args.search_term
     if ens_client and not search_term.startswith('0x') and not all(c in '0123456789abcdef' for c in search_term.lower()):
         ens_results = ens_client.search_by_ens(search_term)
+        seen_addrs = {}
         for domain in ens_results:
             resolved = domain.get('resolvedAddress', {})
             if resolved:
                 addr = resolved.get('id')
                 if addr:
-                    # Check if this address is an indexer
-                    indexer = client.get_indexer_details(addr)
-                    if indexer:
-                        indexer['ens_name'] = domain.get('name')
-                        indexers.append(indexer)
+                    ens_name = domain.get('name')
+                    if addr in seen_addrs:
+                        # Append ENS name to existing entry
+                        existing = seen_addrs[addr]
+                        existing.setdefault('ens_names', []).append(ens_name)
+                    else:
+                        # Check if this address is an indexer
+                        indexer = client.get_indexer_details(addr)
+                        if indexer:
+                            indexer['ens_names'] = [ens_name] if ens_name else []
+                            indexer['ens_name'] = ens_name
+                            seen_addrs[addr] = indexer
+                            indexers.append(indexer)
     
     # Then try direct search
     if not indexers:
@@ -636,10 +647,14 @@ Examples:
         print(f"{Colors.YELLOW}Multiple indexers found:{Colors.RESET}")
         for i, idx in enumerate(indexers[:10]):
             addr = idx.get('id', '')
-            ens = idx.get('ens_name') or (ens_client.resolve_address(addr) if ens_client else None)
-            url = idx.get('url', '')[:40]
+            ens_names = idx.get('ens_names', [])
+            if not ens_names:
+                ens = (ens_client.resolve_address(addr) if ens_client else None)
+                if ens:
+                    ens_names = [ens]
+            url = (idx.get('url') or '')[:40]
             stake = format_tokens_short(idx.get('stakedTokens', '0'))
-            name_display = f"{ens} " if ens else ""
+            name_display = f"{', '.join(ens_names)} " if ens_names else ""
             print(f"  {i+1}. {name_display}({addr[:10]}...) - {stake} GRT - {url}")
         
         try:
@@ -700,6 +715,10 @@ Examples:
     # See: https://github.com/graphprotocol/graph-network-subgraph/issues/323
     rpc_url = get_rpc_url()
     self_stake_thawing = 0
+    # Active provisioned self-stake from the contract. This is the real basis for the
+    # delegation cap, not stakedTokens (which ignores thawing and unprovisioned stake).
+    provision_active = None
+    delegation_ratio = 16  # protocol default; overridden by the contract when RPC is available
     if rpc_url:
         staking_client = HorizonStakingClient(rpc_url)
         contract_capacity = staking_client.get_tokens_available(indexer_id)
@@ -707,7 +726,10 @@ Examples:
             log.debug(f"Using contract tokenCapacity ({contract_capacity}) instead of subgraph ({token_capacity})")
             token_capacity = contract_capacity
         provision = staking_client.get_provision(indexer_id)
-        self_stake_thawing = provision.get('tokensThawing', 0) if provision else 0
+        if provision:
+            self_stake_thawing = provision.get('tokensThawing', 0)
+            provision_active = provision.get('tokens', 0) - self_stake_thawing
+        delegation_ratio = staking_client.get_delegation_ratio()
 
     # Delegations in thawing = delegated - delegatedCapacity
     delegations_thawing = delegated - delegated_capacity
@@ -719,25 +741,32 @@ Examples:
     remaining = total_stake - allocated
     remaining_pct = (remaining / total_stake * 100) if total_stake > 0 else 0
     
-    # Delegation capacity (16x multiplier is the protocol default)
-    delegation_ratio = 16
-    max_delegation = self_stake * delegation_ratio
-    # Tokens in thawing still occupy delegation slots until fully withdrawn
-    delegation_remaining = max(0, max_delegation - delegated)
-    delegation_used_pct = (delegated / max_delegation * 100) if max_delegation > 0 else 0
+    # Delegation capacity: the protocol caps useful delegation at delegation_ratio x the
+    # active provisioned self-stake (provision_active), NOT total stakedTokens. The contract's
+    # getTokensAvailable() only counts min(active delegation, ratio x provision_active) toward
+    # allocation capacity; delegation above that cap earns nothing. Fall back to stakedTokens
+    # as an approximation when the contract is unavailable.
+    delegation_basis = provision_active if provision_active is not None else self_stake
+    max_delegation = delegation_basis * delegation_ratio
+    # Compare against active delegation (delegated_capacity = delegated - thawing), which is
+    # what the contract actually counts.
+    delegation_remaining = max(0, max_delegation - delegated_capacity)
+    delegation_overflow = max(0, delegated_capacity - max_delegation)
+    delegation_used_pct = (delegated_capacity / max_delegation * 100) if max_delegation > 0 else 0
     
     self_stake_str = f"{Colors.BRIGHT_GREEN}{format_tokens(str(self_stake))}{Colors.RESET}"
     if self_stake_thawing > 0:
         self_stake_str += f" {Colors.DIM}({format_tokens(str(self_stake_thawing))} thawing){Colors.RESET}"
     print(f"  Self stake:      {self_stake_str}")
-    delegated_str = f"{Colors.BRIGHT_CYAN}{format_tokens(str(delegated))}{Colors.RESET} / {format_tokens(str(max_delegation))} ({delegation_used_pct:.0f}%)"
+    delegated_str = f"{Colors.BRIGHT_CYAN}{format_tokens(str(delegated_capacity))}{Colors.RESET} / {format_tokens(str(max_delegation))} ({delegation_used_pct:.0f}%)"
     if delegations_thawing > 0:
         delegated_str += f" {Colors.DIM}({format_tokens(str(delegations_thawing))} thawing){Colors.RESET}"
     print(f"  Delegated:       {delegated_str}")
     if delegation_remaining > 0:
         print(f"  Delegation room: {Colors.BRIGHT_GREEN}{format_tokens(str(delegation_remaining))}{Colors.RESET}")
     else:
-        print(f"  Delegation room: {Colors.BRIGHT_RED}FULL{Colors.RESET}")
+        over_str = f" {Colors.DIM}({format_tokens(str(delegation_overflow))} over cap){Colors.RESET}" if delegation_overflow > 0 else ""
+        print(f"  Delegation room: {Colors.BRIGHT_RED}FULL{Colors.RESET}{over_str}")
     total_str = f"{Colors.BOLD}Total:           {format_tokens(str(total_stake))}{Colors.RESET}"
     if self_stake_thawing > 0:
         total_str += f" {Colors.DIM}(net){Colors.RESET}"
@@ -1122,10 +1151,16 @@ Examples:
                 'subgraph_id': get_subgraph_id_from_deployment(deployment)
             })
     
+    # Current active delegation = shareAmount x delegationExchangeRate.
+    # NOTE: DelegatedStake.stakedTokens is the cumulative lifetime amount delegated (deposits),
+    # NOT the current balance, so it must not be used as the displayed delegation amount.
+    exchange_rate = float(indexer.get('delegationExchangeRate') or 0)
+
     # Recent delegations
     for stake in recent_delegations:
         delegator_id = stake.get('delegator', {}).get('id', '?')
-        staked_tokens = stake.get('stakedTokens', '0')
+        shares = int(stake.get('shareAmount', '0') or 0)
+        balance_tokens = int(shares * exchange_rate)  # current active delegation (wei)
         created_at = int(stake.get('createdAt') or 0)
         delegated_at = int(stake.get('lastDelegatedAt') or 0)
         # If createdAt is within the period, it's a new delegation (initial amount)
@@ -1134,16 +1169,18 @@ Examples:
         events.append({
             'type': 'delegate',
             'timestamp': delegated_at,
-            'tokens': staked_tokens,
+            'tokens': balance_tokens,
             'delegator': delegator_id,
             'is_new': is_new
         })
-    
-    # Recent undelegations - use lockedTokens (amount in thawing) 
+
+    # Recent undelegations - use lockedTokens (amount in thawing)
+    # Remaining = current ACTIVE delegation = shareAmount x delegationExchangeRate.
     for stake in recent_undelegations:
         delegator_id = stake.get('delegator', {}).get('id', '?')
-        locked_tokens = stake.get('lockedTokens', '0')  # Amount being undelegated
-        remaining_tokens = stake.get('stakedTokens', '0')  # Amount still delegated
+        locked_tokens = stake.get('lockedTokens', '0')  # Amount being undelegated (thawing)
+        shares = int(stake.get('shareAmount', '0') or 0)
+        remaining_tokens = int(shares * exchange_rate)  # current active delegation (wei)
         undelegated_at = int(stake.get('lastUndelegatedAt') or 0)
         events.append({
             'type': 'undelegate',
