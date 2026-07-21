@@ -31,16 +31,44 @@ from pathlib import Path
 from common import (
     Colors, terminal_link, format_deployment_link,
     format_tokens, format_timestamp, format_duration,
+    allocation_deadline, format_time_left,
     print_section, strip_ansi, get_display_width
 )
 from config import get_network_subgraph_url, get_ens_subgraph_url, get_my_indexer_id, get_analytics_subgraph_url, get_rpc_url
 from ens_client import ENSClient
 from sync_status import IndexerStatusClient, format_sync_status as _format_sync_status
 from rewards import get_accrued_rewards, get_indexer_reward_cut
-from contracts import AllocationResizeClient
+from contracts import (
+    AllocationResizeClient, HorizonStakingClient,
+    MAX_POI_STALENESS_SECONDS, MAX_ALLOCATION_EPOCHS, EPOCH_DURATION_SECONDS,
+)
 from logger import setup_logging, get_logger
 
 log = get_logger(__name__)
+
+# Legacy allocation lifetime expressed in seconds (28 epochs ≈ 28 days).
+MAX_ALLOCATION_SECONDS = MAX_ALLOCATION_EPOCHS * EPOCH_DURATION_SECONDS
+
+_max_poi_staleness_cache: Optional[int] = None
+
+
+def get_max_poi_staleness() -> int:
+    """Return SubgraphService.maxPOIStaleness() in seconds, cached per run.
+
+    Falls back to the mainnet default if the RPC is unavailable.
+    """
+    global _max_poi_staleness_cache
+    if _max_poi_staleness_cache is not None:
+        return _max_poi_staleness_cache
+    try:
+        rpc_url = get_rpc_url()
+        if rpc_url:
+            _max_poi_staleness_cache = HorizonStakingClient(rpc_url).get_max_poi_staleness()
+            return _max_poi_staleness_cache
+    except Exception:
+        pass
+    _max_poi_staleness_cache = MAX_POI_STALENESS_SECONDS
+    return _max_poi_staleness_cache
 
 
 def get_current_block_number(rpc_url: Optional[str] = None) -> Optional[int]:
@@ -340,8 +368,12 @@ class TheGraphClient:
                 }
                 allocatedTokens
                 createdAt
+                createdAtEpoch
                 closedAt
                 status
+                isLegacy
+                poiCount
+                latestPoiPresentedAt
                 indexingRewards
                 indexingIndexerRewards
                 indexingDelegatorRewards
@@ -1158,7 +1190,7 @@ def fetch_sync_statuses_async(indexer_urls: Dict[str, str], subgraph_hash: str, 
         if not url:
             return (indexer_id, None, None)
         client = IndexerStatusClient(timeout=10)
-        all_statuses = client.get_all_deployments_status(url)
+        all_statuses = client.get_all_deployments_status(url, deployments=[subgraph_hash])
         if all_statuses:
             status = all_statuses.get(subgraph_hash)
             return (indexer_id, status, None)
@@ -1301,13 +1333,35 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
         status_color = Colors.BRIGHT_GREEN if status == 'Active' else Colors.DIM
         tokens_str = format_tokens(tokens)
         
-        # Calculate duration for active allocations
+        # For active allocations, show time left before the allocation goes
+        # stale (stops earning). Since Horizon this is anchored on the last POI
+        # presentation, not on the creation date. The allocation age is kept as
+        # dim secondary context.
         duration_str = ""
+        poi_warning = ""
         if status == 'Active' and not alloc.get('closedAt'):
             created_ts = int(alloc.get('createdAt', '0'))
             if created_ts > 0:
-                duration_seconds = datetime.now().timestamp() - created_ts
-                duration_str = f" ({format_duration(duration_seconds)})"
+                now_ts = datetime.now().timestamp()
+                deadline, anchor_kind = allocation_deadline(
+                    alloc, get_max_poi_staleness(), MAX_ALLOCATION_SECONDS)
+                seconds_left = deadline - now_ts
+                age_str = format_duration(now_ts - created_ts)
+                left_str = format_time_left(seconds_left)
+                # Flag Horizon allocations that have never presented a POI.
+                poi_note = ""
+                if anchor_kind == 'created-horizon':
+                    poi_note = f"{Colors.DIM}, no POI yet{Colors.RESET}"
+                duration_str = (f" {Colors.DIM}({age_str} old,{Colors.RESET} "
+                                f"{left_str}{poi_note}{Colors.DIM}){Colors.RESET}")
+                # Row-level POI staleness alert (Horizon only): a scannable
+                # marker, distinct from the sync status, for allocations whose
+                # POI is about to (or has) gone stale and stopped earning.
+                if anchor_kind != 'created-legacy':
+                    if seconds_left <= 0:
+                        poi_warning = f"  {Colors.BRIGHT_RED}⚠ POI stale{Colors.RESET}"
+                    elif seconds_left <= 7 * 86400:
+                        poi_warning = f"  {Colors.BRIGHT_YELLOW}⚠ POI aging{Colors.RESET}"
         
         # Get sync status for this indexer
         sync_status = sync_statuses.get(indexer_id.lower())
@@ -1335,7 +1389,7 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
             closed = format_timestamp(str(alloc.get('closedAt', '0')))[:16]
             print(f"  {marker}{' ' * marker_padding}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_GREEN}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  {Colors.DIM}{created}{Colors.RESET}  {status_color}{status}{Colors.RESET}")
         else:
-            print(f"  {marker}{' ' * marker_padding}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_GREEN}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  {Colors.DIM}{created}{Colors.RESET}  {status_color}{status}{Colors.RESET}{Colors.DIM}{duration_str}{Colors.RESET}{sync_indicator}")
+            print(f"  {marker}{' ' * marker_padding}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_GREEN}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  {Colors.DIM}{created}{Colors.RESET}  {status_color}{status}{Colors.RESET}{Colors.DIM}{duration_str}{Colors.RESET}{sync_indicator}{poi_warning}")
             # Track for compatibility (not used anymore)
             allocation_lines.append({
                 'indexer_id': indexer_id.lower(),

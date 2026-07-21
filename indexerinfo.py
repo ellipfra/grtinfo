@@ -411,6 +411,9 @@ class TheGraphClient:
                     id
                     createdAt
                     allocatedTokens
+                    isLegacy
+                    poiCount
+                    latestPoiPresentedAt
                 }}
             }}
             """
@@ -997,34 +1000,45 @@ Examples:
                     if failed > 0:
                         print(f"  {Colors.DIM}⚠ {failed} allocations failed to fetch{Colors.RESET}")
                     
-                    # Build histogram by epochs until expiration
-                    from contracts import EPOCH_DURATION_SECONDS, MAX_ALLOCATION_EPOCHS
+                    # Build histogram by days until the allocation goes stale.
+                    # Since Horizon the deadline is anchored on the last POI
+                    # presentation (maxPOIStaleness), not on the creation date;
+                    # legacy allocations still expire maxAllocationEpochs after
+                    # creation. See common.allocation_deadline.
+                    from contracts import (
+                        EPOCH_DURATION_SECONDS, MAX_ALLOCATION_EPOCHS,
+                        MAX_POI_STALENESS_SECONDS,
+                    )
+                    from common import allocation_deadline
                     now = datetime.now().timestamp()
-                    
-                    # Group rewards by epochs remaining until expiration
-                    epoch_buckets = {}  # epoch_remaining -> (total_rewards, count)
-                    
+                    max_alloc_seconds = MAX_ALLOCATION_EPOCHS * EPOCH_DURATION_SECONDS
+                    try:
+                        max_poi_staleness = HorizonStakingClient(rpc_url).get_max_poi_staleness() if rpc_url else MAX_POI_STALENESS_SECONDS
+                    except Exception:
+                        max_poi_staleness = MAX_POI_STALENESS_SECONDS
+
+                    # Group rewards by whole days remaining until stale
+                    epoch_buckets = {}  # days_remaining -> (total_rewards, count)
+
                     for alloc in allocations_with_created:
                         alloc_id = alloc.get('id', '').lower()
                         created_at = int(alloc.get('createdAt', 0))
                         reward = rewards_map.get(alloc_id) or rewards_map.get(alloc_id.lower()) or 0
-                        
+
                         if created_at > 0 and reward and reward > 0:
-                            # Calculate age in epochs (days)
-                            age_seconds = now - created_at
-                            age_epochs = int(age_seconds / EPOCH_DURATION_SECONDS)
-                            # Can be negative if allocation is past max age
-                            epochs_remaining = MAX_ALLOCATION_EPOCHS - age_epochs
-                            
-                            if epochs_remaining not in epoch_buckets:
-                                epoch_buckets[epochs_remaining] = {'rewards': 0, 'count': 0}
-                            epoch_buckets[epochs_remaining]['rewards'] += reward
-                            epoch_buckets[epochs_remaining]['count'] += 1
-                    
+                            deadline, _ = allocation_deadline(alloc, max_poi_staleness, max_alloc_seconds)
+                            # Days remaining (can be negative if already stale)
+                            days_remaining = int((deadline - now) // EPOCH_DURATION_SECONDS)
+
+                            if days_remaining not in epoch_buckets:
+                                epoch_buckets[days_remaining] = {'rewards': 0, 'count': 0}
+                            epoch_buckets[days_remaining]['rewards'] += reward
+                            epoch_buckets[days_remaining]['count'] += 1
+
                     # Display histogram
                     if epoch_buckets:
-                        print(f"\n  {Colors.BOLD}Rewards by epochs until expiration:{Colors.RESET}")
-                        print(f"  {Colors.DIM}(allocations expire after 28 epochs ≈ 28 days){Colors.RESET}")
+                        print(f"\n  {Colors.BOLD}Rewards by days until stale:{Colors.RESET}")
+                        print(f"  {Colors.DIM}(Horizon: {max_poi_staleness // 86400}d since last POI; legacy: 28 epochs since creation){Colors.RESET}")
                         
                         max_reward = max(b['rewards'] for b in epoch_buckets.values()) if epoch_buckets else 0
                         bar_width = 30

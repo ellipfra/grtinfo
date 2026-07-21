@@ -54,6 +54,11 @@ GET_PROVISION_SELECTOR = "0x25d9897e"
 # SubgraphService.getDelegationRatio() returns (uint32)
 GET_DELEGATION_RATIO_SELECTOR = "0x1ebb7c30"
 
+# SubgraphService.maxPOIStaleness() returns (uint256)
+# Seconds allowed since the last POI presentation before a Horizon allocation
+# stops earning indexing rewards (goes "stale").
+GET_MAX_POI_STALENESS_SELECTOR = "0x85e82baf"
+
 
 # =============================================================================
 # Network Constants
@@ -71,8 +76,13 @@ DEFAULT_THAWING_PERIOD = 28
 # Epoch duration in seconds (approximately 24 hours on Arbitrum)
 EPOCH_DURATION_SECONDS = 86400  # 24 hours
 
-# Maximum allocation age in epochs before rewards expire
+# Maximum allocation age in epochs before rewards expire (legacy, pre-Horizon model)
 MAX_ALLOCATION_EPOCHS = 28
+
+# Max seconds since the last POI presentation before a Horizon allocation goes
+# stale and stops earning (SubgraphService.maxPOIStaleness(); 28 days on mainnet).
+# Used as a fallback when the on-chain value cannot be read.
+MAX_POI_STALENESS_SECONDS = 2_419_200  # 28 days
 
 
 # =============================================================================
@@ -131,6 +141,7 @@ class HorizonStakingClient:
     def __init__(self, rpc_url: str):
         self.rpc_url = rpc_url
         self._delegation_ratio: Optional[int] = None
+        self._max_poi_staleness: Optional[int] = None
 
     def _eth_call(self, to: str, data: str, block: str = "latest") -> Optional[str]:
         """Make an eth_call to the contract at a given block."""
@@ -174,6 +185,24 @@ class HorizonStakingClient:
             self._delegation_ratio = self._decode_uint256(result)
             return self._delegation_ratio
         return 16  # Default fallback
+
+    def get_max_poi_staleness(self) -> int:
+        """Get maxPOIStaleness (seconds) from the SubgraphService contract.
+
+        This is the window since the last POI presentation after which a Horizon
+        allocation stops earning indexing rewards. Falls back to the mainnet
+        default (28 days) if the call fails.
+        """
+        if self._max_poi_staleness is not None:
+            return self._max_poi_staleness
+
+        result = self._eth_call(SUBGRAPH_SERVICE, GET_MAX_POI_STALENESS_SELECTOR)
+        if result:
+            value = self._decode_uint256(result)
+            if value > 0:
+                self._max_poi_staleness = value
+                return value
+        return MAX_POI_STALENESS_SECONDS  # Default fallback
 
     def get_tokens_available(self, indexer_address: str) -> Optional[int]:
         """Get the tokens available for an indexer from the contract.

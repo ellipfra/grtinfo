@@ -143,6 +143,64 @@ def format_duration(seconds: float) -> str:
         return f"{seconds}s"
 
 
+def allocation_deadline(alloc: dict, max_poi_staleness_seconds: int,
+                        max_allocation_seconds: int) -> tuple:
+    """Compute when an allocation stops earning indexing rewards.
+
+    Since the Horizon upgrade the allocation creation date no longer bounds its
+    lifetime. A Horizon allocation keeps earning as long as its indexer presents
+    a fresh POI within ``maxPOIStaleness``; each POI presentation resets the
+    clock. Legacy (pre-Horizon) allocations still expire ``maxAllocationEpochs``
+    after creation.
+
+    Args:
+        alloc: allocation dict with at least ``createdAt`` and, when available,
+            ``isLegacy``, ``poiCount`` and ``latestPoiPresentedAt``.
+        max_poi_staleness_seconds: SubgraphService.maxPOIStaleness() in seconds.
+        max_allocation_seconds: legacy max allocation lifetime in seconds.
+
+    Returns:
+        Tuple ``(deadline_ts, anchor_kind)`` where ``deadline_ts`` is the Unix
+        timestamp at which rewards stop, and ``anchor_kind`` is one of
+        ``'poi'`` (anchored on the last POI), ``'created-horizon'`` (Horizon
+        allocation that never presented a POI) or ``'created-legacy'``.
+    """
+    created_at = int(alloc.get('createdAt') or 0)
+
+    # Legacy allocations keep the old creation-based expiry.
+    if alloc.get('isLegacy'):
+        return created_at + max_allocation_seconds, 'created-legacy'
+
+    poi_count = int(alloc.get('poiCount') or 0)
+    latest_poi = int(alloc.get('latestPoiPresentedAt') or 0)
+    if poi_count > 0 and latest_poi > 0:
+        return latest_poi + max_poi_staleness_seconds, 'poi'
+
+    # Horizon allocation that has not presented a POI yet: staleness starts at
+    # creation, mirroring the contract behaviour.
+    return created_at + max_poi_staleness_seconds, 'created-horizon'
+
+
+def format_time_left(seconds_left: float, colors: type = Colors) -> str:
+    """Format the time remaining before an allocation goes stale, with color.
+
+    Green when comfortably in the future, yellow within a week, red within two
+    days, and a bright red ``stale`` once the deadline has passed.
+    """
+    if seconds_left <= 0:
+        return f"{colors.BRIGHT_RED}stale{colors.RESET}"
+
+    days = seconds_left / 86400
+    if days <= 2:
+        color = colors.BRIGHT_RED
+    elif days <= 7:
+        color = colors.BRIGHT_YELLOW
+    else:
+        color = colors.BRIGHT_GREEN
+
+    return f"{color}{format_duration(seconds_left)} left{colors.RESET}"
+
+
 def print_section(title: str, colors: type = Colors):
     """Display a compact section title with color
     
