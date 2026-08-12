@@ -3,7 +3,7 @@
 Shared module for querying indexer sync status from Graph Node /status endpoints
 """
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 import requests
 
 
@@ -39,12 +39,16 @@ class IndexerStatusClient:
             'fatalError': Optional[str]
         }
         """
-        statuses = self.get_all_deployments_status(indexer_url)
+        statuses = self.get_all_deployments_status(indexer_url, deployments=[deployment_hash])
         return statuses.get(deployment_hash)
-    
-    def get_all_deployments_status(self, indexer_url: str) -> Dict[str, Dict]:
-        """Get sync status for all deployments from an indexer's status endpoint
-        
+
+    def get_all_deployments_status(self, indexer_url: str, deployments: Optional[List[str]] = None) -> Dict[str, Dict]:
+        """Get sync status for deployments from an indexer's status endpoint
+
+        Args:
+            deployments: optional list of IPFS hashes to filter server-side
+                (avoids downloading the full status of large indexers)
+
         Returns: dict mapping deployment IPFS hash to status info:
         {
             'QmXyz...': {
@@ -73,26 +77,43 @@ class IndexerStatusClient:
         status_url = f"{indexer_url.rstrip('/')}/status"
         self.last_url = status_url
         
+        query = '''
+        query Statuses($subgraphs: [String!]!) {
+            indexingStatuses(subgraphs: $subgraphs) {
+                subgraph
+                synced
+                health
+                fatalError { message }
+                chains {
+                    network
+                    latestBlock { number }
+                    chainHeadBlock { number }
+                }
+            }
+        }
+        ''' if deployments else '''
+        {
+            indexingStatuses {
+                subgraph
+                synced
+                health
+                fatalError { message }
+                chains {
+                    network
+                    latestBlock { number }
+                    chainHeadBlock { number }
+                }
+            }
+        }
+        '''
+        payload = {'query': query}
+        if deployments:
+            payload['variables'] = {'subgraphs': deployments}
+
         try:
             response = self._session.post(
                 status_url,
-                json={
-                    'query': '''
-                    {
-                        indexingStatuses {
-                            subgraph
-                            synced
-                            health
-                            fatalError { message }
-                            chains { 
-                                network
-                                latestBlock { number } 
-                                chainHeadBlock { number } 
-                            }
-                        }
-                    }
-                    '''
-                },
+                json=payload,
                 timeout=self._timeout
             )
             response.raise_for_status()

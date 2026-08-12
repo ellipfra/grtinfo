@@ -143,6 +143,31 @@ def format_duration(seconds: float) -> str:
         return f"{seconds}s"
 
 
+def allocation_anchor(alloc: dict) -> tuple:
+    """Return the reference point from which an allocation's staleness runs.
+
+    Rewards accrue (and staleness is measured) from the most recent of the
+    allocation creation and its last POI presentation. Displaying the raw
+    creation date for an allocation that has presented POIs since is
+    misleading: what matters is how long ago the last POI was presented.
+
+    Args:
+        alloc: allocation dict with ``createdAt`` and, when available,
+            ``poiCount`` and ``latestPoiPresentedAt``.
+
+    Returns:
+        Tuple ``(timestamp, kind)`` where ``kind`` is ``'poi'`` when the anchor
+        is the last POI presentation, ``'created'`` when no POI was presented.
+    """
+    created_at = int(alloc.get('createdAt') or 0)
+    poi_count = int(alloc.get('poiCount') or 0)
+    latest_poi = int(alloc.get('latestPoiPresentedAt') or 0)
+
+    if poi_count > 0 and latest_poi > created_at:
+        return latest_poi, 'poi'
+    return created_at, 'created'
+
+
 def allocation_deadline(alloc: dict, max_poi_staleness_seconds: int,
                         max_allocation_seconds: int) -> tuple:
     """Compute when an allocation stops earning indexing rewards.
@@ -171,13 +196,11 @@ def allocation_deadline(alloc: dict, max_poi_staleness_seconds: int,
     if alloc.get('isLegacy'):
         return created_at + max_allocation_seconds, 'created-legacy'
 
-    poi_count = int(alloc.get('poiCount') or 0)
-    latest_poi = int(alloc.get('latestPoiPresentedAt') or 0)
-    if poi_count > 0 and latest_poi > 0:
-        return latest_poi + max_poi_staleness_seconds, 'poi'
-
-    # Horizon allocation that has not presented a POI yet: staleness starts at
-    # creation, mirroring the contract behaviour.
+    # Horizon: staleness runs from the last POI, or from creation when no POI
+    # has been presented yet, mirroring the contract behaviour.
+    anchor_ts, anchor_kind = allocation_anchor(alloc)
+    if anchor_kind == 'poi':
+        return anchor_ts + max_poi_staleness_seconds, 'poi'
     return created_at + max_poi_staleness_seconds, 'created-horizon'
 
 

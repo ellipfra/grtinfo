@@ -13,7 +13,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import (
     Colors, terminal_link, format_deployment_link,
     format_tokens, format_tokens_short, format_percentage,
-    format_timestamp, format_duration, strip_ansi, get_display_width
+    format_timestamp, format_duration, strip_ansi, get_display_width,
+    allocation_anchor, allocation_deadline
 )
 
 
@@ -115,6 +116,45 @@ class TestFormatDuration:
     def test_format_duration_zero(self):
         result = format_duration(0)
         assert result is not None
+
+
+class TestAllocationAnchor:
+    """Tests for the staleness anchor of an allocation"""
+
+    DAY = 86400
+
+    def test_anchor_without_poi_is_creation(self):
+        alloc = {'createdAt': 1000, 'poiCount': '0', 'latestPoiPresentedAt': None}
+        assert allocation_anchor(alloc) == (1000, 'created')
+
+    def test_anchor_with_poi_is_last_poi(self):
+        alloc = {'createdAt': 1000, 'poiCount': '2', 'latestPoiPresentedAt': 5000}
+        assert allocation_anchor(alloc) == (5000, 'poi')
+
+    def test_anchor_ignores_poi_older_than_creation(self):
+        alloc = {'createdAt': 5000, 'poiCount': '1', 'latestPoiPresentedAt': 1000}
+        assert allocation_anchor(alloc) == (5000, 'created')
+
+    def test_anchor_of_legacy_allocation_still_uses_poi(self):
+        alloc = {'createdAt': 1000, 'poiCount': '1', 'latestPoiPresentedAt': 5000,
+                 'isLegacy': True}
+        assert allocation_anchor(alloc) == (5000, 'poi')
+
+    def test_deadline_follows_last_poi(self):
+        alloc = {'createdAt': 1000, 'poiCount': '1', 'latestPoiPresentedAt': 5000}
+        deadline, kind = allocation_deadline(alloc, 28 * self.DAY, 28 * self.DAY)
+        assert (deadline, kind) == (5000 + 28 * self.DAY, 'poi')
+
+    def test_deadline_of_legacy_allocation_follows_creation(self):
+        alloc = {'createdAt': 1000, 'poiCount': '1', 'latestPoiPresentedAt': 5000,
+                 'isLegacy': True}
+        deadline, kind = allocation_deadline(alloc, 28 * self.DAY, 28 * self.DAY)
+        assert (deadline, kind) == (1000 + 28 * self.DAY, 'created-legacy')
+
+    def test_deadline_without_poi_follows_creation(self):
+        alloc = {'createdAt': 1000, 'poiCount': '0'}
+        deadline, kind = allocation_deadline(alloc, 28 * self.DAY, 28 * self.DAY)
+        assert (deadline, kind) == (1000 + 28 * self.DAY, 'created-horizon')
 
 
 class TestStripAnsi:

@@ -35,7 +35,7 @@ except ImportError:
 from common import (
     Colors, terminal_link, format_deployment_link,
     format_tokens, format_tokens_short, format_percentage,
-    format_timestamp, format_duration, print_section
+    format_timestamp, format_duration, print_section, allocation_anchor
 )
 from config import get_network_subgraph_url, get_ens_subgraph_url, get_rpc_url
 from contracts import HorizonStakingClient, AllocationResizeClient
@@ -305,6 +305,9 @@ class TheGraphClient:
                 allocatedTokens
                 createdAt
                 status
+                isLegacy
+                poiCount
+                latestPoiPresentedAt
                 subgraphDeployment {{
                     ipfsHash
                     signalledTokens
@@ -1043,11 +1046,11 @@ Examples:
                         max_reward = max(b['rewards'] for b in epoch_buckets.values()) if epoch_buckets else 0
                         bar_width = 30
                         
-                        # Group epochs into buckets: exp+0d, 1-7d, 8d, 9d, 10-14d, 15-21d, 22-28d
+                        # Group epochs into buckets: exp, 1-6d, 7d, 8d, 9-14d, 15-21d, 22-28d
                         # Note: negative epochs means allocation is past max age (should have been closed)
                         # Use -9999 to catch all expired allocations regardless of how old
-                        bucket_ranges = [(-9999, 0), (1, 7), (8, 8), (9, 9), (10, 14), (15, 21), (22, 28)]
-                        bucket_labels = ["exp+0d", "1-7d", "8d", "9d", "10-14d", "15-21d", "22-28d"]
+                        bucket_ranges = [(-9999, 0), (1, 6), (7, 7), (8, 8), (9, 14), (15, 21), (22, 28)]
+                        bucket_labels = ["exp", "1-6d", "7d", "8d", "9-14d", "15-21d", "22-28d"]
                         
                         for (start, end), label_text in zip(bucket_ranges, bucket_labels):
                             # For expired+0d bucket, sum all epochs <= 0
@@ -1327,17 +1330,21 @@ Examples:
             subgraph = format_deployment_link(subgraph_hash, subgraph_id) if subgraph_hash != '?' else subgraph_hash
             tokens = format_tokens(alloc.get('allocatedTokens', '0'))
             signal = int(deployment.get('signalledTokens', '0')) / 1e18
-            created_ts = int(alloc.get('createdAt', 0))
-            age = format_duration(int(datetime.now().timestamp()) - created_ts)
-            
+            # Time since the staleness anchor: the last POI presentation, or
+            # the creation date when no POI has been presented yet. The raw
+            # allocation age is not what bounds rewards since Horizon.
+            anchor_ts, anchor_kind = allocation_anchor(alloc)
+            age = format_duration(int(datetime.now().timestamp()) - anchor_ts) if anchor_ts > 0 else '?'
+            anchor_label = 'since POI' if anchor_kind == 'poi' else 'no POI'
+
             # Get sync status for this deployment
             sync_status = sync_statuses.get(subgraph_hash)
             sync_indicator = format_sync_status(sync_status) if sync_statuses else ""
-            
+
             if sync_indicator:
-                print(f"  {subgraph}  {tokens:>12}  {Colors.DIM}{age:>8}{Colors.RESET}  {sync_indicator}")
+                print(f"  {subgraph}  {tokens:>12}  {Colors.DIM}{age:>8} {anchor_label:<9}{Colors.RESET}  {sync_indicator}")
             else:
-                print(f"  {subgraph}  {tokens:>12}  {Colors.DIM}{age:>8}  signal: {signal:,.0f}{Colors.RESET}")
+                print(f"  {subgraph}  {tokens:>12}  {Colors.DIM}{age:>8} {anchor_label:<9}  signal: {signal:,.0f}{Colors.RESET}")
     
     print()
 

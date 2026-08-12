@@ -31,7 +31,7 @@ from pathlib import Path
 from common import (
     Colors, terminal_link, format_deployment_link,
     format_tokens, format_timestamp, format_duration,
-    allocation_deadline, format_time_left,
+    allocation_anchor, allocation_deadline, format_time_left,
     print_section, strip_ansi, get_display_width
 )
 from config import get_network_subgraph_url, get_ens_subgraph_url, get_my_indexer_id, get_analytics_subgraph_url, get_rpc_url
@@ -1293,6 +1293,7 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
     my_accrued_rewards = None
     my_allocation_amount = 0.0
     my_allocation_days = 0.0
+    my_allocation_poi_note = ""
     my_allocation_id = None
     
     for alloc in allocations:
@@ -1315,6 +1316,14 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
                 my_allocation_days = (datetime.now().timestamp() - created_ts) / 86400
                 my_allocation_amount = amount
                 my_allocation_id = allocation_id
+                # Accrued rewards are collected on each POI presentation, so
+                # they only cover the period since the last one.
+                anchor_ts, anchor_src = allocation_anchor(alloc)
+                if anchor_src == 'poi':
+                    poi_days = (datetime.now().timestamp() - anchor_ts) / 86400
+                    my_allocation_poi_note = f", last POI {poi_days:.1f} days ago"
+                else:
+                    my_allocation_poi_note = ", no POI yet"
                 
                 # Try to get real rewards from contract
                 if allocation_id:
@@ -1346,14 +1355,20 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
                 deadline, anchor_kind = allocation_deadline(
                     alloc, get_max_poi_staleness(), MAX_ALLOCATION_SECONDS)
                 seconds_left = deadline - now_ts
-                age_str = format_duration(now_ts - created_ts)
                 left_str = format_time_left(seconds_left)
-                # Flag Horizon allocations that have never presented a POI.
-                poi_note = ""
-                if anchor_kind == 'created-horizon':
-                    poi_note = f"{Colors.DIM}, no POI yet{Colors.RESET}"
-                duration_str = (f" {Colors.DIM}({age_str} old,{Colors.RESET} "
-                                f"{left_str}{poi_note}{Colors.DIM}){Colors.RESET}")
+                # Show the time since the staleness anchor rather than the raw
+                # allocation age: for a Horizon allocation the last POI is what
+                # the deadline hangs on. Legacy allocations still expire from
+                # their creation date, so their age stays the relevant number.
+                anchor_ts, anchor_src = allocation_anchor(alloc)
+                if anchor_kind == 'created-legacy':
+                    since_label = f"{format_duration(now_ts - created_ts)} old"
+                elif anchor_src == 'poi':
+                    since_label = f"{format_duration(now_ts - anchor_ts)} since POI"
+                else:
+                    since_label = f"{format_duration(now_ts - created_ts)} old, no POI yet"
+                duration_str = (f" {Colors.DIM}({since_label},{Colors.RESET} "
+                                f"{left_str}{Colors.DIM}){Colors.RESET}")
                 # Row-level POI staleness alert (Horizon only): a scannable
                 # marker, distinct from the sync status, for allocations whose
                 # POI is about to (or has) gone stale and stopped earning.
@@ -1403,7 +1418,7 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
     if my_indexer_id and my_allocation_id:
         print(f"{Colors.BOLD}Your Allocation:{Colors.RESET}")
         lines_after += 1
-        print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Allocated: {Colors.BRIGHT_GREEN}{my_allocation_amount:,.0f} GRT{Colors.RESET} for {Colors.DIM}{my_allocation_days:.1f} days{Colors.RESET}")
+        print(f"  {Colors.BRIGHT_YELLOW}★{Colors.RESET} Allocated: {Colors.BRIGHT_GREEN}{my_allocation_amount:,.0f} GRT{Colors.RESET} for {Colors.DIM}{my_allocation_days:.1f} days{my_allocation_poi_note}{Colors.RESET}")
         lines_after += 1
         if my_accrued_rewards is not None:
             if my_accrued_rewards > 0:
