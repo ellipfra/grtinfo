@@ -480,6 +480,51 @@ class TestProvisionParsing:
         assert result is None
 
 
+class TestTotalSignalledTokens:
+    """Tests for summing the network signal across subgraph deployments"""
+
+    def _client(self):
+        from indexerinfo import TheGraphClient
+        return TheGraphClient("http://fake-subgraph")
+
+    def test_sums_single_page(self):
+        """Test summing signalledTokens from a single page"""
+        client = self._client()
+        page = {'subgraphDeployments': [
+            {'id': '0x01', 'signalledTokens': str(int(1000 * 1e18))},
+            {'id': '0x02', 'signalledTokens': str(int(2500 * 1e18))},
+        ]}
+        with patch.object(client, 'query', return_value=page):
+            total = client.get_total_signalled_tokens()
+
+        assert total == int(3500 * 1e18)
+
+    def test_paginates_on_id(self):
+        """Test pagination continues while full pages are returned"""
+        client = self._client()
+        full_page = {'subgraphDeployments': [
+            {'id': f'0x{i:04x}', 'signalledTokens': str(int(1e18))} for i in range(1000)
+        ]}
+        last_page = {'subgraphDeployments': [
+            {'id': '0xffff', 'signalledTokens': str(int(5e18))}
+        ]}
+        with patch.object(client, 'query', side_effect=[full_page, last_page]) as q:
+            total = client.get_total_signalled_tokens()
+
+        assert total == int(1005 * 1e18)
+        assert q.call_count == 2
+        # Second query must resume after the last id of the first page
+        assert '0x03e7' in q.call_args_list[1][0][0]
+
+    def test_returns_zero_on_failure(self):
+        """Test a failed query yields 0 so the caller can fall back"""
+        client = self._client()
+        with patch.object(client, 'query', return_value={}):
+            total = client.get_total_signalled_tokens()
+
+        assert total == 0
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
 

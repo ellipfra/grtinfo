@@ -334,7 +334,45 @@ class TheGraphClient:
         """
         result = self.query(query)
         return result.get('graphNetwork', {})
-    
+
+    def get_total_signalled_tokens(self) -> int:
+        """Sum signalledTokens over all subgraph deployments (in wei)
+
+        graphNetwork.totalTokensSignalled under-counts: it ignores curator query fees
+        deposited into curation pools by Curation.collect(). The RewardsManager dilutes
+        issuance over the curation contract's whole GRT balance, which matches the sum
+        of every deployment's signalledTokens. Returns 0 if the query fails.
+        """
+        total = 0
+        last_id = ""
+        batch_size = 1000
+
+        while True:
+            query = f"""
+            {{
+                subgraphDeployments(
+                    where: {{ id_gt: "{last_id}", signalledTokens_gt: 0 }}
+                    orderBy: id
+                    orderDirection: asc
+                    first: {batch_size}
+                ) {{
+                    id
+                    signalledTokens
+                }}
+            }}
+            """
+            result = self.query(query)
+            batch = result.get('subgraphDeployments', [])
+            if not batch:
+                break
+            for d in batch:
+                total += int(d.get('signalledTokens', '0'))
+            last_id = batch[-1]['id']
+            if len(batch) < batch_size:
+                break
+
+        return total
+
     def get_all_active_allocations(self, indexer_id: str) -> List[Dict]:
         """Get all active allocations with signal data for APR calculation"""
         all_allocations = []
@@ -353,6 +391,7 @@ class TheGraphClient:
                     subgraphDeployment {{
                         signalledTokens
                         stakedTokens
+                        deniedAt
                     }}
                 }}
             }}
@@ -918,24 +957,36 @@ Examples:
     if network_stats and all_allocations:
         # Network data
         issuance_per_block = int(network_stats.get('networkGRTIssuancePerBlock', '0')) / 1e18
-        total_signal_network = int(network_stats.get('totalTokensSignalled', '0')) / 1e18
-        
+        # Sum the deployments' signal directly: graphNetwork.totalTokensSignalled misses the
+        # curator query fees sitting in the curation pools, which do dilute the issuance.
+        signalled_sum = client.get_total_signalled_tokens()
+        if signalled_sum <= 0:
+            signalled_sum = int(network_stats.get('totalTokensSignalled', '0'))
+        total_signal_network = signalled_sum / 1e18
+
         # Ethereum blocks per year (~12s per block)
         eth_blocks_per_year = 2_628_000
-        annual_issuance = issuance_per_block * eth_blocks_per_year
-        
+        # 1% of every distribution is burned by GraphPayments.collect() in Horizon
+        annual_issuance = issuance_per_block * eth_blocks_per_year * 0.99
+
         # Calculate expected rewards by summing each allocation's contribution
         # Formula: reward = annual_issuance × (signal_subgraph / total_signal_network) × (allocation / staked_on_subgraph)
         total_alloc = 0
         total_expected_rewards = 0
         
         for a in all_allocations:
+            deployment = a.get('subgraphDeployment', {}) or {}
             alloc = int(a.get('allocatedTokens', '0')) / 1e18
-            signal = int(a.get('subgraphDeployment', {}).get('signalledTokens', '0')) / 1e18
-            staked = int(a.get('subgraphDeployment', {}).get('stakedTokens', '0')) / 1e18
-            
+            signal = int(deployment.get('signalledTokens', '0')) / 1e18
+            staked = int(deployment.get('stakedTokens', '0')) / 1e18
+            denied = int(deployment.get('deniedAt', '0') or 0) > 0
+
             total_alloc += alloc
-            
+
+            # Denied deployments mint no rewards, but their signal still dilutes the issuance
+            if denied:
+                continue
+
             if staked > 0 and total_signal_network > 0:
                 # Subgraph's share of total rewards
                 subgraph_share = signal / total_signal_network
@@ -946,7 +997,8 @@ Examples:
                 total_expected_rewards += alloc_reward
         
         # Convert stake values from wei to GRT for APR calculation
-        self_stake_grt = self_stake / 1e18
+        # Self stake net of thawing: thawing tokens no longer count toward the provision
+        self_stake_grt = (self_stake - self_stake_thawing) / 1e18
         net_delegated_grt = (delegated - delegated_thawing) / 1e18
 
         # Calculate APRs (use net delegated excluding thawing, since thawing tokens don't earn rewards)
