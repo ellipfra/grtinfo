@@ -37,7 +37,26 @@ ALLOCATION_RESIZED_TOPIC = "0x6db4a6f9be2d5e72eb2a2af2374ac487971bf342a261ba0bc1
 # =============================================================================
 
 # RewardsManager.getRewards(address _rewardsIssuer, address _allocationID) returns (uint256)
-GET_REWARDS_SELECTOR = "0x0e6f0a5e"
+GET_REWARDS_SELECTOR = "0x779bcb9b"
+
+# RewardsManager.getAllocatedIssuancePerBlock() returns (uint256)
+# Effective GRT/block minted as indexing rewards. Since GIP-0086/0088 the
+# RewardsManager asks the IssuanceAllocator for its share (selfIssuanceRate);
+# the remainder of the protocol issuance goes to other targets (e.g. the
+# Innovation Allocation of GIP-0089, 20% since 2026-08-31).
+GET_ALLOCATED_ISSUANCE_PER_BLOCK_SELECTOR = "0xe208d721"
+
+# RewardsManager.getRawIssuancePerBlock() returns (uint256)
+# Legacy issuancePerBlock stored in the RewardsManager. Only used on-chain when no
+# IssuanceAllocator is set; this is the value the network subgraph still reports
+# as graphNetwork.networkGRTIssuancePerBlock.
+GET_RAW_ISSUANCE_PER_BLOCK_SELECTOR = "0xa661b307"
+
+# RewardsManager.getIssuanceAllocator() returns (address)
+GET_ISSUANCE_ALLOCATOR_SELECTOR = "0xb712bc59"
+
+# IssuanceAllocator.getIssuancePerBlock() returns (uint256) - total protocol issuance
+GET_ALLOCATOR_ISSUANCE_PER_BLOCK_SELECTOR = "0x79d5fc54"
 
 # Staking.getDelegation(address _indexer, address _delegator) returns (uint256 shares, uint256 tokensLocked, uint256 tokensLockedUntil)
 GET_DELEGATION_SELECTOR = "0x15049a5a"
@@ -131,17 +150,11 @@ import logging
 from typing import Optional, List, Dict
 
 
-class HorizonStakingClient:
-    """Client for fetching staking data directly from the HorizonStaking contract.
-
-    This is a workaround for the subgraph's tokenCapacity being out of sync
-    with the contract's getTokensAvailable value.
-    """
+class ContractCallClient:
+    """Minimal eth_call helper shared by the read-only contract clients below."""
 
     def __init__(self, rpc_url: str):
         self.rpc_url = rpc_url
-        self._delegation_ratio: Optional[int] = None
-        self._max_poi_staleness: Optional[int] = None
 
     def _eth_call(self, to: str, data: str, block: str = "latest") -> Optional[str]:
         """Make an eth_call to the contract at a given block."""
@@ -174,6 +187,19 @@ class HorizonStakingClient:
         if not hex_data or hex_data == "0x":
             return 0
         return int(hex_data, 16)
+
+
+class HorizonStakingClient(ContractCallClient):
+    """Client for fetching staking data directly from the HorizonStaking contract.
+
+    This is a workaround for the subgraph's tokenCapacity being out of sync
+    with the contract's getTokensAvailable value.
+    """
+
+    def __init__(self, rpc_url: str):
+        super().__init__(rpc_url)
+        self._delegation_ratio: Optional[int] = None
+        self._max_poi_staleness: Optional[int] = None
 
     def get_delegation_ratio(self) -> int:
         """Get the delegation ratio from the SubgraphService contract."""
@@ -267,6 +293,62 @@ class HorizonStakingClient:
             'shares': int(hex_data[64:128], 16),
             'tokensThawing': int(hex_data[128:192], 16),
             'sharesThawing': int(hex_data[192:256], 16),
+        }
+
+
+# =============================================================================
+# RewardsManagerClient - Effective indexing rewards issuance
+# =============================================================================
+# Since the GIP-0086 RewardsManager upgrade, the GRT/block minted as indexing
+# rewards is no longer the RewardsManager's own issuancePerBlock. When an
+# IssuanceAllocator (GIP-0088) is configured, RewardsManager.getAllocatedIssuancePerBlock()
+# returns IssuanceAllocator.getTargetIssuancePerBlock(rewardsManager).selfIssuanceRate,
+# i.e. only the share of the protocol issuance allocated to indexing rewards.
+# The rest is minted by the allocator for other targets (GIP-0089 Innovation
+# Allocation: 20% since 2026-08-31). Governance can change the split at any time
+# with a single call, so it must be read on-chain rather than hard-coded.
+#
+# The network subgraph's graphNetwork.networkGRTIssuancePerBlock still tracks the
+# raw (pre-split) value, so it over-estimates rewards.
+
+class RewardsManagerClient(ContractCallClient):
+    """Read the effective indexing-rewards issuance from the RewardsManager contract."""
+
+    def get_issuance_per_block(self) -> Optional[Dict]:
+        """Return the indexing rewards issuance split, or None if the RPC call fails.
+
+        Returns a dict (all rates in wei per L1 block):
+            'allocated': GRT/block actually minted as indexing rewards
+                         (getAllocatedIssuancePerBlock)
+            'raw':       legacy RewardsManager.issuancePerBlock (getRawIssuancePerBlock)
+            'total':     total protocol issuance from the IssuanceAllocator when one
+                         is set, else same as 'raw'
+            'allocator': IssuanceAllocator address, or None when not configured
+        """
+        allocated_hex = self._eth_call(REWARDS_MANAGER, GET_ALLOCATED_ISSUANCE_PER_BLOCK_SELECTOR)
+        if not allocated_hex or allocated_hex == "0x":
+            return None
+        allocated = self._decode_uint256(allocated_hex)
+
+        raw_hex = self._eth_call(REWARDS_MANAGER, GET_RAW_ISSUANCE_PER_BLOCK_SELECTOR)
+        raw = self._decode_uint256(raw_hex) if raw_hex else allocated
+
+        allocator = None
+        total = raw
+        allocator_hex = self._eth_call(REWARDS_MANAGER, GET_ISSUANCE_ALLOCATOR_SELECTOR)
+        if allocator_hex and len(allocator_hex) >= 42:
+            addr = "0x" + allocator_hex[-40:]
+            if int(addr, 16) != 0:
+                allocator = addr
+                total_hex = self._eth_call(allocator, GET_ALLOCATOR_ISSUANCE_PER_BLOCK_SELECTOR)
+                if total_hex and total_hex != "0x":
+                    total = self._decode_uint256(total_hex)
+
+        return {
+            'allocated': allocated,
+            'raw': raw,
+            'total': total,
+            'allocator': allocator,
         }
 
 

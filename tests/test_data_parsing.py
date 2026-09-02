@@ -35,7 +35,7 @@ from tests.fixtures.rpc_responses import (
     PROVISION_NO_THAWING, PROVISION_WITH_THAWING,
 )
 
-from contracts import HorizonStakingClient
+from contracts import HorizonStakingClient, RewardsManagerClient
 
 
 class TestIndexerDataParsing:
@@ -478,6 +478,85 @@ class TestProvisionParsing:
             result = client.get_provision("0x" + "a" * 40)
 
         assert result is None
+
+
+def _uint256_hex(value: int) -> str:
+    return "0x" + hex(value)[2:].zfill(64)
+
+
+class TestIssuancePerBlock:
+    """Tests for RewardsManagerClient.get_issuance_per_block (GIP-0086/0088 split)"""
+
+    ALLOCATOR = "0xb64f29b2d81140ffc3a135e319561a1bd03b1a7e"
+    RAW = 120_730_000_000_000_000_000        # 120.73 GRT/block
+    ALLOCATED = 96_584_000_000_000_000_000   # 80% -> indexing rewards
+
+    def _responses(self, allocated, raw, allocator, total):
+        from contracts import (
+            REWARDS_MANAGER,
+            GET_ALLOCATED_ISSUANCE_PER_BLOCK_SELECTOR,
+            GET_RAW_ISSUANCE_PER_BLOCK_SELECTOR,
+            GET_ISSUANCE_ALLOCATOR_SELECTOR,
+            GET_ALLOCATOR_ISSUANCE_PER_BLOCK_SELECTOR,
+        )
+        table = {
+            (REWARDS_MANAGER, GET_ALLOCATED_ISSUANCE_PER_BLOCK_SELECTOR): allocated,
+            (REWARDS_MANAGER, GET_RAW_ISSUANCE_PER_BLOCK_SELECTOR): raw,
+            (REWARDS_MANAGER, GET_ISSUANCE_ALLOCATOR_SELECTOR): allocator,
+            (self.ALLOCATOR, GET_ALLOCATOR_ISSUANCE_PER_BLOCK_SELECTOR): total,
+        }
+        return lambda to, data, block="latest": table.get((to, data))
+
+    def test_split_with_issuance_allocator(self):
+        """RewardsManager only mints the allocator's selfIssuanceRate (80% after GIP-0089)"""
+        client = RewardsManagerClient("http://fake-rpc")
+        fake = self._responses(
+            _uint256_hex(self.ALLOCATED), _uint256_hex(self.RAW),
+            "0x" + self.ALLOCATOR[2:].zfill(64), _uint256_hex(self.RAW),
+        )
+        with patch.object(client, '_eth_call', side_effect=fake):
+            result = client.get_issuance_per_block()
+
+        assert result == {
+            'allocated': self.ALLOCATED,
+            'raw': self.RAW,
+            'total': self.RAW,
+            'allocator': self.ALLOCATOR,
+        }
+        assert result['allocated'] / result['total'] == pytest.approx(0.8)
+
+    def test_no_allocator_configured(self):
+        """Without an allocator the RewardsManager mints its raw issuancePerBlock"""
+        client = RewardsManagerClient("http://fake-rpc")
+        fake = self._responses(
+            _uint256_hex(self.RAW), _uint256_hex(self.RAW), _uint256_hex(0), None,
+        )
+        with patch.object(client, '_eth_call', side_effect=fake):
+            result = client.get_issuance_per_block()
+
+        assert result['allocated'] == self.RAW
+        assert result['total'] == self.RAW
+        assert result['allocator'] is None
+
+    def test_rpc_failure_returns_none(self):
+        """Callers must fall back to the subgraph value when the RPC call fails"""
+        client = RewardsManagerClient("http://fake-rpc")
+        with patch.object(client, '_eth_call', return_value=None):
+            assert client.get_issuance_per_block() is None
+
+    def test_allocator_total_failure_falls_back_to_raw(self):
+        """If the allocator call fails, 'total' falls back to the raw value"""
+        client = RewardsManagerClient("http://fake-rpc")
+        fake = self._responses(
+            _uint256_hex(self.ALLOCATED), _uint256_hex(self.RAW),
+            "0x" + self.ALLOCATOR[2:].zfill(64), None,
+        )
+        with patch.object(client, '_eth_call', side_effect=fake):
+            result = client.get_issuance_per_block()
+
+        assert result['allocated'] == self.ALLOCATED
+        assert result['total'] == self.RAW
+        assert result['allocator'] == self.ALLOCATOR
 
 
 class TestTotalSignalledTokens:

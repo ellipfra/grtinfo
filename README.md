@@ -27,7 +27,7 @@ Display detailed information about any indexer.
 - **Thawing Delegations**: Shows delegations in withdrawal period
 - **Over-allocation Warning**: Detects when allocated > available stake
 - **Reward Cuts**: Raw and effective cuts for indexing rewards and query fees
-- **Instant APR**: Real-time APR calculation based on current allocations
+- **Instant APR**: Real-time APR calculation based on current allocations, using the effective indexing-rewards issuance read on-chain (`RewardsManager.getAllocatedIssuancePerBlock()`, i.e. net of the share the IssuanceAllocator redirects to other targets such as the GIP-0089 Innovation Allocation)
 - **Activity Timeline**: Recent allocations, unallocations, reward collections, delegations/undelegations
 - **Top Allocations**: Largest active allocations with signal info
 - **Flexible Search**: Find indexers by partial ENS name, address, or URL

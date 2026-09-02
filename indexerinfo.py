@@ -38,7 +38,7 @@ from common import (
     format_timestamp, format_duration, print_section, allocation_anchor
 )
 from config import get_network_subgraph_url, get_ens_subgraph_url, get_rpc_url
-from contracts import HorizonStakingClient, AllocationResizeClient
+from contracts import HorizonStakingClient, RewardsManagerClient, AllocationResizeClient
 from ens_client import ENSClient
 from sync_status import IndexerStatusClient, format_sync_status as _format_sync_status
 from logger import setup_logging, get_logger
@@ -956,7 +956,29 @@ Examples:
     
     if network_stats and all_allocations:
         # Network data
-        issuance_per_block = int(network_stats.get('networkGRTIssuancePerBlock', '0')) / 1e18
+        # The subgraph's networkGRTIssuancePerBlock is the RewardsManager's raw (legacy)
+        # issuancePerBlock. Since GIP-0086/0088 the RewardsManager only mints the share
+        # the IssuanceAllocator assigns to it (getAllocatedIssuancePerBlock); the rest
+        # goes to other targets (GIP-0089 Innovation Allocation). Read it on-chain so
+        # the APR follows any governance change to the split.
+        subgraph_issuance = int(network_stats.get('networkGRTIssuancePerBlock', '0'))
+        issuance = RewardsManagerClient(rpc_url).get_issuance_per_block() if rpc_url else None
+        if issuance:
+            issuance_per_block = issuance['allocated'] / 1e18
+            total_issuance = issuance['total'] / 1e18
+            if total_issuance > 0 and issuance['allocated'] != issuance['total']:
+                rewards_share = issuance['allocated'] / issuance['total'] * 100
+                print(f"  Issuance:         {Colors.BRIGHT_CYAN}{issuance_per_block:,.3f} GRT/block{Colors.RESET} "
+                      f"= {rewards_share:.1f}% of {total_issuance:,.3f} "
+                      f"{Colors.DIM}({100 - rewards_share:.1f}% redirected by IssuanceAllocator){Colors.RESET}")
+            else:
+                print(f"  Issuance:         {Colors.BRIGHT_CYAN}{issuance_per_block:,.3f} GRT/block{Colors.RESET}")
+            if subgraph_issuance and subgraph_issuance != issuance['raw']:
+                log.debug(f"Subgraph issuance ({subgraph_issuance}) differs from on-chain raw ({issuance['raw']})")
+        else:
+            issuance_per_block = subgraph_issuance / 1e18
+            print(f"  Issuance:         {issuance_per_block:,.3f} GRT/block "
+                  f"{Colors.BRIGHT_YELLOW}(subgraph value: ignores the IssuanceAllocator split, APR may be overestimated){Colors.RESET}")
         # Sum the deployments' signal directly: graphNetwork.totalTokensSignalled misses the
         # curator query fees sitting in the curation pools, which do dilute the issuance.
         signalled_sum = client.get_total_signalled_tokens()
