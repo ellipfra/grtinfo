@@ -799,9 +799,13 @@ Examples:
     delegation_overflow = max(0, delegated_capacity - max_delegation)
     delegation_used_pct = (delegated_capacity / max_delegation * 100) if max_delegation > 0 else 0
     
-    self_stake_str = f"{Colors.BRIGHT_GREEN}{format_tokens(str(self_stake))}{Colors.RESET}"
+    # Show the ACTIVE self stake (provision minus thawing), mirroring the Delegated line
+    # which already displays delegated_capacity. This keeps the lines additive:
+    # active self stake + active delegation = Total (tokenCapacity).
+    self_stake_active = provision_active if provision_active is not None else self_stake - self_stake_thawing
+    self_stake_str = f"{Colors.BRIGHT_GREEN}{format_tokens(str(self_stake_active))}{Colors.RESET}"
     if self_stake_thawing > 0:
-        self_stake_str += f" {Colors.DIM}({format_tokens(str(self_stake_thawing))} thawing){Colors.RESET}"
+        self_stake_str += f" {Colors.DIM}({format_tokens(str(self_stake))} total, {format_tokens(str(self_stake_thawing))} thawing){Colors.RESET}"
     print(f"  Self stake:      {self_stake_str}")
     delegated_str = f"{Colors.BRIGHT_CYAN}{format_tokens(str(delegated_capacity))}{Colors.RESET} / {format_tokens(str(max_delegation))} ({delegation_used_pct:.0f}%)"
     if delegations_thawing > 0:
@@ -813,13 +817,19 @@ Examples:
         over_str = f" {Colors.DIM}({format_tokens(str(delegation_overflow))} over cap){Colors.RESET}" if delegation_overflow > 0 else ""
         print(f"  Delegation room: {Colors.BRIGHT_RED}FULL{Colors.RESET}{over_str}")
     total_str = f"{Colors.BOLD}Total:           {format_tokens(str(total_stake))}{Colors.RESET}"
-    if self_stake_thawing > 0:
-        total_str += f" {Colors.DIM}(net){Colors.RESET}"
+    if self_stake_thawing > 0 or delegations_thawing > 0:
+        total_str += f" {Colors.DIM}(allocation capacity, thawing excluded){Colors.RESET}"
     print(f"  {total_str}")
     print(f"  Allocated:       {format_tokens(str(allocated))}")
     if remaining < 0:
         # Over-allocated - show warning
         print(f"  Remaining:       {Colors.BRIGHT_RED}{format_tokens(str(remaining))} ({remaining_pct:.1f}%) ⚠ OVER-ALLOCATED{Colors.RESET}")
+        if self_stake_thawing > 0 or delegations_thawing > 0:
+            # Capacity drops as soon as a thaw is initiated, but existing allocations stay
+            # open. SubgraphService then resizes each allocation to 0 on its next POI
+            # (AllocationHandler._collectIndexingRewards -> _isOverAllocated) until the
+            # tracker is back under capacity. Fix: addToProvision or close allocations first.
+            print(f"  {Colors.DIM}(thawing reduced capacity below open allocations: each POI will resize its allocation to 0 until back under capacity){Colors.RESET}")
     else:
         remaining_color = Colors.BRIGHT_GREEN if remaining_pct < 10 else (Colors.BRIGHT_YELLOW if remaining_pct > 30 else Colors.DIM)
         print(f"  Remaining:       {remaining_color}{format_tokens(str(remaining))} ({remaining_pct:.1f}%){Colors.RESET}")
