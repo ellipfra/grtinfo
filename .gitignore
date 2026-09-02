@@ -10,4 +10,5 @@ __pycache__/
 .idea/
 .pytest_cache/
 .ruff_cache/
-.mypy_cache/
+.mypy_cache/venv/
+ISSUE_COMMENT.md
