@@ -29,7 +29,7 @@ Display detailed information about any indexer.
 - **Over-allocation Warning**: Detects when allocated > available stake
 - **Reward Cuts**: Raw and effective cuts for indexing rewards and query fees
 - **Eligibility**: Whether the indexer is currently eligible for indexing rewards (Rewards Eligibility Oracle, GIP-0079), with the reason and the time left before the renewal expires; the Instant APR is zeroed when the indexer is not eligible
-- **Instant APR**: Real-time APR calculation based on current allocations, using the effective indexing-rewards issuance read on-chain (`RewardsManager.getAllocatedIssuancePerBlock()`, i.e. net of the share the IssuanceAllocator redirects to other targets such as the GIP-0089 Innovation Allocation)
+- **Instant APR**: Real-time APR calculation based on current allocations, using the effective indexing-rewards issuance read on-chain (`RewardsManager.getAllocatedIssuancePerBlock()`, i.e. net of the share the IssuanceAllocator redirects to other targets such as the GIP-0089 Innovation Allocation). No protocol cut applies to indexing rewards; the formula is checked against on-chain accrual by `scripts/reconcile_rewards.py`
 - **Activity Timeline**: Recent allocations, unallocations, reward collections, delegations/undelegations
 - **Top Allocations**: Largest active allocations with signal info
 - **Flexible Search**: Find indexers by partial ENS name, address, or URL

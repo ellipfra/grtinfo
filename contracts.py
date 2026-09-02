@@ -15,6 +15,10 @@ REWARDS_MANAGER = "0x971B9d3d0Ae3ECa029CAB5eA1fB0F72c85e6a525"
 STAKING = "0x00669A4CF01450B64E8A2A20E9b1fcb71E61eF03"
 SUBGRAPH_SERVICE = "0xB2Bb92D0dE618878e438b55d5846cFEcD9301105"
 GRT_TOKEN = "0x9623063377AD1B27544C965cCd7342f7EA7e88C7"
+# L2Curation: its whole GRT balance is the denominator the RewardsManager uses to
+# dilute issuance (graphToken().balanceOf(curation())). Equals the sum of every
+# deployment's signalledTokens.
+CURATION = "0x22d78fb4bc72e191C765807f8891B5e1785C8014"
 
 # Legacy/alternate names for compatibility
 STAKING_CONTRACT = STAKING
@@ -62,6 +66,14 @@ GET_ISSUANCE_ALLOCATOR_SELECTOR = "0xb712bc59"
 
 # IssuanceAllocator.getIssuancePerBlock() returns (uint256) - total protocol issuance
 GET_ALLOCATOR_ISSUANCE_PER_BLOCK_SELECTOR = "0x79d5fc54"
+
+# RewardsManager.minimumSubgraphSignal() returns (uint256)
+# Deployments whose curation signal is below this accrue no rewards (they are
+# reclaimed by the protocol) while their signal still dilutes accRewardsPerSignal.
+GET_MINIMUM_SUBGRAPH_SIGNAL_SELECTOR = "0xb951acd7"
+
+# GRT.balanceOf(address) returns (uint256)
+BALANCE_OF_SELECTOR = "0x70a08231"
 
 # Staking.getDelegation(address _indexer, address _delegator) returns (uint256 shares, uint256 tokensLocked, uint256 tokensLockedUntil)
 GET_DELEGATION_SELECTOR = "0x15049a5a"
@@ -133,6 +145,11 @@ PPM_BASE = 1_000_000
 
 # Default thawing period in epochs (approximately 28 days)
 DEFAULT_THAWING_PERIOD = 28
+
+# Horizon thawing period in seconds. The real value is per provision
+# (HorizonStaking.getProvision().thawingPeriod); SubgraphService currently pins
+# its allowed range to exactly 28 days. Fallback only.
+DEFAULT_THAWING_PERIOD_SECONDS = 2_419_200  # 28 days
 
 # Epoch duration in seconds (approximately 24 hours on Arbitrum)
 EPOCH_DURATION_SECONDS = 86400  # 24 hours
@@ -308,10 +325,16 @@ class HorizonStakingClient(ContractCallClient):
             return None
 
         hex_data = result[2:] if result.startswith("0x") else result
-        return {
+        provision = {
             'tokens': int(hex_data[0:64], 16),
             'tokensThawing': int(hex_data[64:128], 16),
         }
+        # Provision struct: tokens, tokensThawing, sharesThawing, maxVerifierCut,
+        # thawingPeriod, createdAt, ... The thawing period (seconds) governs both
+        # the indexer's own thaw requests and its delegators' undelegations.
+        if len(hex_data) >= 320:
+            provision['thawingPeriod'] = int(hex_data[256:320], 16)
+        return provision
 
     def get_delegation_pool_at_block(self, indexer_address: str, block_number: int) -> Optional[Dict]:
         """Get delegation pool data at a specific block number.
@@ -355,6 +378,25 @@ class HorizonStakingClient(ContractCallClient):
 
 class RewardsManagerClient(ContractCallClient):
     """Read the effective indexing-rewards issuance from the RewardsManager contract."""
+
+    def get_minimum_subgraph_signal(self) -> Optional[int]:
+        """Return RewardsManager.minimumSubgraphSignal() in wei, or None if the call fails.
+
+        A deployment below this signal mints nothing for its allocations (rewards are
+        reclaimed), exactly like a denied deployment, but its signal still dilutes the
+        issuance. Callers should skip such deployments in reward projections.
+        """
+        result = self._eth_call(REWARDS_MANAGER, GET_MINIMUM_SUBGRAPH_SIGNAL_SELECTOR)
+        if not result or result == "0x":
+            return None
+        return self._decode_uint256(result)
+
+    def get_curation_balance(self) -> Optional[int]:
+        """Return the curation contract's GRT balance in wei (the on-chain signal total)."""
+        result = self._eth_call(GRT_TOKEN, BALANCE_OF_SELECTOR + self._encode_address(CURATION))
+        if not result or result == "0x":
+            return None
+        return self._decode_uint256(result)
 
     def get_issuance_per_block(self) -> Optional[Dict]:
         """Return the indexing rewards issuance split, or None if the RPC call fails.

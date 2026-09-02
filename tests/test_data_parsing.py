@@ -855,6 +855,85 @@ class TestEligibilityFormatting:
         assert self._fmt(None, 'full') == ""
 
 
+class TestMinimumSubgraphSignal:
+    """Tests for RewardsManagerClient.get_minimum_subgraph_signal"""
+
+    def test_reads_value(self):
+        client = RewardsManagerClient("http://fake-rpc")
+        with patch.object(client, '_eth_call', return_value=_uint256_hex(100 * 10**18)):
+            assert client.get_minimum_subgraph_signal() == 100 * 10**18
+
+    def test_zero_is_zero_not_none(self):
+        client = RewardsManagerClient("http://fake-rpc")
+        with patch.object(client, '_eth_call', return_value=_uint256_hex(0)):
+            assert client.get_minimum_subgraph_signal() == 0
+
+    def test_rpc_failure_returns_none(self):
+        client = RewardsManagerClient("http://fake-rpc")
+        with patch.object(client, '_eth_call', return_value=None):
+            assert client.get_minimum_subgraph_signal() is None
+
+
+class TestProvisionThawingPeriod:
+    """The provision's thawingPeriod (slot 5) drives undelegation thawing"""
+
+    def test_full_provision_exposes_thawing_period(self):
+        slots = [12_800_862 * 10**18, 2_500_000 * 10**18, 2_500_000 * 10**18,
+                 500_000, 2_419_200, 1_765_326_979, 500_000, 2_419_200, 0, 0]
+        result = "0x" + "".join(hex(v)[2:].zfill(64) for v in slots)
+        client = HorizonStakingClient("http://fake-rpc")
+        with patch.object(client, '_eth_call', return_value=result):
+            provision = client.get_provision("0x" + "a" * 40)
+
+        assert provision['tokens'] == 12_800_862 * 10**18
+        assert provision['thawingPeriod'] == 2_419_200
+
+    def test_short_provision_has_no_thawing_period(self):
+        two_slots = "0x" + hex(10**18)[2:].zfill(64) + "0" * 64
+        client = HorizonStakingClient("http://fake-rpc")
+        with patch.object(client, '_eth_call', return_value=two_slots):
+            provision = client.get_provision("0x" + "a" * 40)
+
+        assert provision is not None
+        assert 'thawingPeriod' not in provision
+
+
+class TestNetworkTotals:
+    """Reward proportion network average must only count claimable deployments"""
+
+    def _dep(self, staked, signal, denied=0):
+        return {'stakedTokens': str(staked), 'signalledTokens': str(signal), 'deniedAt': str(denied)}
+
+    def test_claimable_rules(self):
+        from subinfo import is_claimable_deployment
+        assert is_claimable_deployment(self._dep(10**18, 10**18))
+        assert not is_claimable_deployment(self._dep(0, 10**18)), "no allocations"
+        assert not is_claimable_deployment(self._dep(10**18, 10**18, denied=1700000000)), "denied"
+        assert not is_claimable_deployment(self._dep(10**18, 5 * 10**18), min_signal_wei=10 * 10**18), "below min signal"
+        assert is_claimable_deployment(self._dep(10**18, 10 * 10**18), min_signal_wei=10 * 10**18), "at min signal"
+
+    def test_totals_split_total_vs_claimable(self):
+        from subinfo import accumulate_network_totals
+        totals = {}
+        accumulate_network_totals(totals, self._dep(100 * 10**18, 10 * 10**18))            # claimable
+        accumulate_network_totals(totals, self._dep(0, 5 * 10**18))                        # unallocated signal
+        accumulate_network_totals(totals, self._dep(50 * 10**18, 5 * 10**18, denied=1))    # denied
+
+        # Everything dilutes the issuance...
+        assert totals['total_signal'] == pytest.approx(20.0)
+        assert totals['total_allocations'] == pytest.approx(150.0)
+        # ...but only the first deployment's rewards are earned by indexers
+        assert totals['claimable_signal'] == pytest.approx(10.0)
+        assert totals['claimable_allocations'] == pytest.approx(100.0)
+
+    def test_missing_fields_do_not_crash(self):
+        from subinfo import accumulate_network_totals
+        totals = {}
+        accumulate_network_totals(totals, {'stakedTokens': None, 'signalledTokens': None})
+        assert totals['total_signal'] == 0.0
+        assert 'claimable_signal' not in totals
+
+
 class TestTotalSignalledTokens:
     """Tests for summing the network signal across subgraph deployments"""
 

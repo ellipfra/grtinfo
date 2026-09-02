@@ -64,6 +64,9 @@ The codebase consists of three main CLI tools that share common infrastructure:
 1. Environment variables (highest): `THEGRAPH_NETWORK_SUBGRAPH_URL`, `MY_INDEXER_ID`, `ENS_SUBGRAPH_URL`, `RPC_URL`
 2. Config file: `~/.grtinfo/config.json`
 
+### Chain Is the Source of Truth
+grtinfo projections must reconcile with the contracts, never the other way around. `scripts/reconcile_rewards.py` compares the instant-APR formula with `RewardsManager.getRewards()` accrual over a block window (ratio must be 1.000) and the summed deployment signal with the curation contract's GRT balance. Run it after touching any reward math. Known facts it encodes: no protocol cut on indexing rewards (the 1% GraphPayments cut is for query fees only); denied deployments and deployments below `minimumSubgraphSignal` mint nothing but still dilute; the undelegation thawing period is per provision (`getProvision().thawingPeriod`); `maxPOIStaleness` is read on-chain.
+
 ### Indexing Rewards Issuance
 Since the GIP-0086/0088 upgrade, the RewardsManager only mints the share of protocol issuance that the IssuanceAllocator assigns to it (`getAllocatedIssuancePerBlock()`); the rest goes to other targets (GIP-0089 Innovation Allocation, 20% since 2026-08-31). The subgraph's `networkGRTIssuancePerBlock` is the raw pre-split value. Always use `RewardsManagerClient.get_issuance_per_block()` from `contracts.py` for reward/APR projections, with the subgraph value only as a fallback.
 

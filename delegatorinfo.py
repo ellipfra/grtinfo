@@ -38,7 +38,8 @@ from common import (
 from config import get_network_subgraph_url, get_ens_subgraph_url, get_analytics_subgraph_url
 from ens_client import ENSClient
 from contracts import (REWARDS_MANAGER, STAKING, SUBGRAPH_SERVICE, GRT_DECIMALS,
-                       RewardsEligibilityClient)
+                       DEFAULT_THAWING_PERIOD_SECONDS,
+                       RewardsEligibilityClient, HorizonStakingClient)
 from logger import setup_logging, get_logger
 
 log = get_logger(__name__)
@@ -1385,6 +1386,19 @@ Examples:
             thawing_ens_names = ens_client.resolve_addresses_batch(thawing_indexer_ids)
         else:
             thawing_ens_names = {}
+
+        # The undelegation thawing period is the indexer's provision.thawingPeriod
+        # (HorizonStaking), not a protocol constant. Fall back to 28 days (the only
+        # value SubgraphService currently allows) when the RPC is unavailable.
+        thaw_periods: Dict[str, int] = {}
+        try:
+            staking_client = HorizonStakingClient(get_rpc_url())
+            for iid in set(i.lower() for i in thawing_indexer_ids):
+                provision = staking_client.get_provision(iid)
+                if provision and provision.get('thawingPeriod'):
+                    thaw_periods[iid] = provision['thawingPeriod']
+        except Exception as e:
+            log.debug(f"Could not read provision thawing periods: {e}")
         
         for d in thawing_delegations:
             indexer_id = d['indexer']['id']
@@ -1400,8 +1414,7 @@ Examples:
                     undelegated_time = datetime.fromtimestamp(int(last_undelegated))
                     now = datetime.now()
                     elapsed = now - undelegated_time
-                    # Thawing period is typically 28 days (28 * 24 * 3600 seconds)
-                    thaw_period_seconds = 28 * 24 * 3600
+                    thaw_period_seconds = thaw_periods.get(indexer_id.lower(), DEFAULT_THAWING_PERIOD_SECONDS)
                     remaining_seconds = thaw_period_seconds - int(elapsed.total_seconds())
                     
                     if remaining_seconds > 0:

@@ -41,6 +41,7 @@ from rewards import get_accrued_rewards, get_indexer_reward_cut
 from contracts import (
     AllocationResizeClient, HorizonStakingClient, RewardsEligibilityClient,
     MAX_POI_STALENESS_SECONDS, MAX_ALLOCATION_EPOCHS, EPOCH_DURATION_SECONDS,
+    RewardsManagerClient,
 )
 from logger import setup_logging, get_logger
 
@@ -48,6 +49,39 @@ log = get_logger(__name__)
 
 # Legacy allocation lifetime expressed in seconds (28 epochs ≈ 28 days).
 MAX_ALLOCATION_SECONDS = MAX_ALLOCATION_EPOCHS * EPOCH_DURATION_SECONDS
+
+NETWORK_TOTALS_CACHE_VERSION = 2
+
+
+def is_claimable_deployment(deployment: Dict, min_signal_wei: int = 0) -> bool:
+    """True if allocations on this deployment actually mint rewards.
+
+    Mirrors RewardsManager: a deployment that is denied, has no allocations, or whose
+    signal is below minimumSubgraphSignal has its rewards reclaimed by the protocol
+    instead of being paid to indexers. Its signal still dilutes accRewardsPerSignal.
+    """
+    if int(deployment.get('deniedAt') or 0) > 0:
+        return False
+    if int(deployment.get('stakedTokens') or 0) <= 0:
+        return False
+    return int(deployment.get('signalledTokens') or 0) >= min_signal_wei
+
+
+def accumulate_network_totals(totals: Dict[str, float], deployment: Dict, min_signal_wei: int = 0) -> None:
+    """Add one deployment to the network totals used by the reward proportion (in GRT).
+
+    'total_signal' sums every deployment (this is what dilutes the issuance), while
+    'claimable_allocations' / 'claimable_signal' only count deployments whose rewards
+    are actually earned by indexers. The network-average reward per allocated token
+    is issuance * claimable_signal / (total_signal * claimable_allocations).
+    """
+    allocations = float(deployment.get('stakedTokens') or 0) / 1e18
+    signal = float(deployment.get('signalledTokens') or 0) / 1e18
+    totals['total_allocations'] = totals.get('total_allocations', 0.0) + allocations
+    totals['total_signal'] = totals.get('total_signal', 0.0) + signal
+    if is_claimable_deployment(deployment, min_signal_wei):
+        totals['claimable_allocations'] = totals.get('claimable_allocations', 0.0) + allocations
+        totals['claimable_signal'] = totals.get('claimable_signal', 0.0) + signal
 
 _max_poi_staleness_cache: Optional[int] = None
 
@@ -737,30 +771,45 @@ class TheGraphClient:
                 except:
                     cache_data = None
             
+            if cache_data and cache_data.get('version') != NETWORK_TOTALS_CACHE_VERSION:
+                cache_data = None  # Older cache without the claimable totals
+
+            # Deployments below minimumSubgraphSignal mint nothing (like denied ones)
+            min_signal_wei = 0
+            try:
+                rpc_url = get_rpc_url()
+                if rpc_url:
+                    min_signal_wei = RewardsManagerClient(rpc_url).get_minimum_subgraph_signal() or 0
+            except Exception:
+                pass
+
             if cache_data:
-                # Use cached values
-                network_total_allocations = cache_data.get('total_allocations', 0)
-                network_total_signal = cache_data.get('total_signal', 0)
+                totals = cache_data
             else:
-                # Query all subgraph deployments to get total allocations and total signal
+                # Query all subgraph deployments to get total allocations and total signal.
+                # Every deployment is included in total_signal (their signal dilutes the
+                # issuance in the RewardsManager), but only claimable deployments count
+                # toward the network average actually earned by allocations.
                 log.info("Calculating network totals (this may take a moment)...")
-                network_total_allocations = 0
-                network_total_signal = 0
-                skip = 0
+                totals = {'total_allocations': 0.0, 'total_signal': 0.0,
+                          'claimable_allocations': 0.0, 'claimable_signal': 0.0}
+                last_id = ""
                 batch_size = 1000
                 batch_count = 0
-                
+
                 while True:
-                    # Include all subgraphs (including inactive/disabled ones)
-                    # because they dilute rewards in the actual smart contract
                     totals_query = f"""
                     query GetNetworkTotals {{
                         subgraphDeployments(
                             first: {batch_size}
-                            skip: {skip}
+                            where: {{ id_gt: "{last_id}" }}
+                            orderBy: id
+                            orderDirection: asc
                         ) {{
+                            id
                             stakedTokens
                             signalledTokens
+                            deniedAt
                         }}
                     }}
                     """
@@ -771,39 +820,37 @@ class TheGraphClient:
                         break
 
                     for dep in deployments:
-                        allocations = dep.get('stakedTokens', '0')
-                        signal = dep.get('signalledTokens', '0')
                         try:
-                            allocations_float = float(allocations) / 1e18
-                            signal_float = float(signal) / 1e18
-                            network_total_allocations += allocations_float
-                            network_total_signal += signal_float
-                        except:
+                            accumulate_network_totals(totals, dep, min_signal_wei)
+                        except (TypeError, ValueError):
                             pass
-                    
+
                     batch_count += 1
                     if batch_count % 5 == 0:
                         log.debug(f"Fetched {batch_count * batch_size} deployments...")
-                    
+
+                    last_id = deployments[-1]['id']
                     if len(deployments) < batch_size:
                         break
-                    
-                    skip += batch_size
-                
-                log.info(f"Network totals calculated: {network_total_allocations:,.0f} allocated, {network_total_signal:,.0f} signal")
-                
+
+                log.info(f"Network totals calculated: {totals['total_allocations']:,.0f} allocated, "
+                         f"{totals['total_signal']:,.0f} signal "
+                         f"({totals['claimable_signal']:,.0f} on claimable deployments)")
+
                 # Save to cache file
                 try:
                     self._cache_file.parent.mkdir(parents=True, exist_ok=True)
                     with open(self._cache_file, 'w') as f:
-                        json.dump({
-                            'timestamp': datetime.now().timestamp(),
-                            'total_allocations': network_total_allocations,
-                            'total_signal': network_total_signal
-                        }, f)
+                        json.dump({'timestamp': datetime.now().timestamp(),
+                                   'version': NETWORK_TOTALS_CACHE_VERSION,
+                                   'min_signal_wei': min_signal_wei,
+                                   **totals}, f)
                 except:
                     pass
-            
+
+            network_total_allocations = totals.get('claimable_allocations', 0)
+            network_total_signal = totals.get('claimable_signal', 0)
+
             # Calculate ratios
             subgraph_allocations_float = float(subgraph_allocations) / 1e18
             subgraph_signal_float = float(subgraph_signal) / 1e18
@@ -812,7 +859,10 @@ class TheGraphClient:
             # Lower allocations/signal ratio = better yield (more rewards per allocation)
             # Formula: (network_ratio / subgraph_ratio) × 100
             # This means: if subgraph has lower ratio than network average, it yields > 100%
-            if subgraph_signal_float > 0 and network_total_signal > 0:
+            if not is_claimable_deployment(deployment, min_signal_wei):
+                # Denied / below minimum signal: allocations here mint nothing
+                reward_proportion = 0.0
+            elif subgraph_signal_float > 0 and network_total_signal > 0:
                 subgraph_ratio = subgraph_allocations_float / subgraph_signal_float
                 network_ratio = network_total_allocations / network_total_signal
                 

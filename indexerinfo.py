@@ -1019,10 +1019,16 @@ Examples:
             signalled_sum = int(network_stats.get('totalTokensSignalled', '0'))
         total_signal_network = signalled_sum / 1e18
 
-        # Ethereum blocks per year (~12s per block)
+        # Ethereum blocks per year (~12s per block; the RewardsManager counts L1 blocks)
         eth_blocks_per_year = 2_628_000
-        # 1% of every distribution is burned by GraphPayments.collect() in Horizon
-        annual_issuance = issuance_per_block * eth_blocks_per_year * 0.99
+        # No cut applies to indexing rewards: AllocationHandler._distributeIndexingRewards
+        # sends the minted tokens straight to the delegation pool / provision without
+        # going through GraphPayments (the 1% protocol cut only applies to query fees).
+        # Verified against RewardsManager.getRewards() accrual: see scripts/reconcile_rewards.py
+        annual_issuance = issuance_per_block * eth_blocks_per_year
+        # Deployments below minimumSubgraphSignal mint nothing (like denied ones)
+        min_signal = RewardsManagerClient(rpc_url).get_minimum_subgraph_signal() if rpc_url else None
+        min_signal = min_signal or 0
 
         # Calculate expected rewards by summing each allocation's contribution
         # Formula: reward = annual_issuance × (signal_subgraph / total_signal_network) × (allocation / staked_on_subgraph)
@@ -1038,8 +1044,9 @@ Examples:
 
             total_alloc += alloc
 
-            # Denied deployments mint no rewards, but their signal still dilutes the issuance
-            if denied:
+            # Denied deployments and deployments below minimumSubgraphSignal mint no
+            # rewards (reclaimed by the protocol), but their signal still dilutes the issuance
+            if denied or int(deployment.get('signalledTokens', '0')) < min_signal:
                 continue
 
             if staked > 0 and total_signal_network > 0:
