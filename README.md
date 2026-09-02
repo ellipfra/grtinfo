@@ -13,6 +13,7 @@ Analyze allocations and curation signals for a specific subgraph deployment.
 - **Curation Signal**: Current signal amount
 - **Signal Changes**: Recent signal additions/removals, upgrade detection
 - **Active Allocations**: Current indexer allocations with duration
+- **Eligibility**: Marks allocations whose indexer is not eligible for indexing rewards (Rewards Eligibility Oracle, GIP-0079), with a count of the ineligible indexers on the deployment
 - **Accrued Rewards**: Precise rewards calculation from smart contract for your allocations
 - **Allocation Timeline**: Chronological view of allocations/unallocations/collections
 - **ENS Resolution**: Automatically resolves indexer addresses to ENS names
@@ -27,6 +28,7 @@ Display detailed information about any indexer.
 - **Thawing Delegations**: Shows delegations in withdrawal period
 - **Over-allocation Warning**: Detects when allocated > available stake
 - **Reward Cuts**: Raw and effective cuts for indexing rewards and query fees
+- **Eligibility**: Whether the indexer is currently eligible for indexing rewards (Rewards Eligibility Oracle, GIP-0079), with the reason and the time left before the renewal expires; the Instant APR is zeroed when the indexer is not eligible
 - **Instant APR**: Real-time APR calculation based on current allocations, using the effective indexing-rewards issuance read on-chain (`RewardsManager.getAllocatedIssuancePerBlock()`, i.e. net of the share the IssuanceAllocator redirects to other targets such as the GIP-0089 Innovation Allocation)
 - **Activity Timeline**: Recent allocations, unallocations, reward collections, delegations/undelegations
 - **Top Allocations**: Largest active allocations with signal info
@@ -41,6 +43,7 @@ Display comprehensive portfolio information for any delegator.
 - **Portfolio Summary**: Staked, accumulated profits, thawing, and total value
 - **Profit Tracking**: Shows accumulated rewards per indexer with profit percentage
 - **Value Calculation**: Current value = staked + accumulated profits
+- **Eligibility**: Flags delegations to indexers that are not eligible for indexing rewards (Rewards Eligibility Oracle, GIP-0079) — their delegators silently earn nothing
 - **Thawing Status**: Delegations in withdrawal period with remaining time
 - **Withdrawal History**: Lifetime withdrawn tokens
 - **ENS Resolution**: Resolves indexer addresses to ENS names
@@ -165,6 +168,8 @@ delegatorinfo 0xc69de45ec5e4ef1df6bef14229660c9211917d86
 | `⚠ XX% unallocated` | Warning: indexer has high unallocated stake |
 | `⚠ OVER-ALLOCATED` | Warning: allocated more than available stake |
 | `(X GRT thawing)` | Delegations in withdrawal period |
+| `✗ ineligible` | Indexer is not eligible for indexing rewards (GIP-0079 oracle) |
+| `[✓]` | Rewards eligibility renewed by the oracle |
 
 ## Terminal Compatibility
 

@@ -35,10 +35,12 @@ except ImportError:
 from common import (
     Colors, terminal_link, format_deployment_link,
     format_tokens, format_tokens_short, format_percentage,
-    format_timestamp, format_duration, print_section, allocation_anchor
+    format_timestamp, format_duration, print_section, allocation_anchor,
+    format_eligibility
 )
 from config import get_network_subgraph_url, get_ens_subgraph_url, get_rpc_url
-from contracts import HorizonStakingClient, RewardsManagerClient, AllocationResizeClient
+from contracts import (HorizonStakingClient, RewardsManagerClient, AllocationResizeClient,
+                       RewardsEligibilityClient)
 from ens_client import ENSClient
 from sync_status import IndexerStatusClient, format_sync_status as _format_sync_status
 from logger import setup_logging, get_logger
@@ -776,6 +778,13 @@ Examples:
             provision_active = provision.get('tokens', 0) - self_stake_thawing
         delegation_ratio = staking_client.get_delegation_ratio()
 
+    # Rewards Eligibility Oracle (GIP-0079): an ineligible indexer mints no
+    # indexing rewards at all. There is no eligibility data in the network
+    # subgraph, so this is RPC-only and simply skipped when unavailable.
+    eligibility_client = RewardsEligibilityClient(rpc_url) if rpc_url else None
+    eligibility = eligibility_client.get_indexer_eligibility(indexer_id) if eligibility_client else None
+    eligibility_config = eligibility_client.get_oracle_config() if eligibility_client else None
+
     # Delegations in thawing = delegated - delegatedCapacity
     delegations_thawing = delegated - delegated_capacity
 
@@ -833,7 +842,21 @@ Examples:
     else:
         remaining_color = Colors.BRIGHT_GREEN if remaining_pct < 10 else (Colors.BRIGHT_YELLOW if remaining_pct > 30 else Colors.DIM)
         print(f"  Remaining:       {remaining_color}{format_tokens(str(remaining))} ({remaining_pct:.1f}%){Colors.RESET}")
-    
+
+    # Rewards eligibility (GIP-0079). Losing it silently zeroes the indexing
+    # rewards of the indexer AND of its delegators, so spell out the consequence.
+    if eligibility:
+        print(f"  Rewards elig.:   {format_eligibility(eligibility, 'full')}")
+        if not eligibility.get('eligible'):
+            if eligibility_config and eligibility_config.get('revert_on_ineligible'):
+                consequence = ("every POI will revert with "
+                               "'Indexer not eligible for rewards'")
+            else:
+                consequence = "rewards are reclaimed by the protocol"
+            print(f"  {Colors.DIM}({consequence}){Colors.RESET}")
+            print(f"  {Colors.DIM}(the oracle renews an indexer that served a valid query "
+                  f"on 5 distinct days in the last 28){Colors.RESET}")
+
     # Reward cuts
     # Raw cut applies to total rewards, but effective cut on delegators is different
     # Formula: rawcut = 1 - (1 - effective) * delegated / (delegated + stake)
@@ -1041,11 +1064,23 @@ Examples:
             apr_indexer = (indexer_rewards / self_stake_grt) * 100 if self_stake_grt > 0 else 0
             apr_delegators = (delegator_rewards / net_delegated_grt) * 100 if net_delegated_grt > 0 else 0
             
-            print(f"  Expected rewards: {Colors.BRIGHT_CYAN}{total_expected_rewards:,.0f} GRT/year{Colors.RESET}")
+            # An ineligible indexer (GIP-0079) mints nothing: keep showing what the
+            # allocations WOULD earn, but zero the APRs so the number is not misread.
+            is_ineligible = bool(eligibility) and not eligibility.get('eligible')
+            potential = " (if eligible)" if is_ineligible else ""
+
+            print(f"  Expected rewards: {Colors.BRIGHT_CYAN}{total_expected_rewards:,.0f} GRT/year{Colors.RESET}{Colors.DIM}{potential}{Colors.RESET}")
             print(f"  Indexer share ({raw_reward_cut*100:.1f}%): {indexer_rewards:,.0f} GRT/year")
             print(f"  Delegator share ({(1-raw_reward_cut)*100:.1f}%): {delegator_rewards:,.0f} GRT/year")
-            print(f"  APR Indexer:    {Colors.BRIGHT_GREEN}{apr_indexer:.1f}%{Colors.RESET}")
-            print(f"  APR Delegators: {Colors.BRIGHT_GREEN}{apr_delegators:.2f}%{Colors.RESET}")
+            if is_ineligible:
+                print(f"  APR Indexer:    {Colors.BRIGHT_RED}0.0%{Colors.RESET} "
+                      f"{Colors.DIM}(would be {apr_indexer:.1f}%){Colors.RESET}")
+                print(f"  APR Delegators: {Colors.BRIGHT_RED}0.00%{Colors.RESET} "
+                      f"{Colors.DIM}(would be {apr_delegators:.2f}%){Colors.RESET}")
+                print(f"  {Colors.BRIGHT_RED}indexer not eligible: rewards are not minted{Colors.RESET}")
+            else:
+                print(f"  APR Indexer:    {Colors.BRIGHT_GREEN}{apr_indexer:.1f}%{Colors.RESET}")
+                print(f"  APR Delegators: {Colors.BRIGHT_GREEN}{apr_delegators:.2f}%{Colors.RESET}")
         else:
             print(f"  {Colors.DIM}Unable to calculate APR{Colors.RESET}")
     else:
@@ -1309,15 +1344,32 @@ Examples:
                 'subgraph_id': get_subgraph_id_from_deployment(dep)
             })
 
+    # Eligibility renewals (GIP-0079). One IndexerEligibilityRenewed log per oracle
+    # run that renewed this indexer; the oracle runs roughly daily.
+    if eligibility_client:
+        for renewal in eligibility_client.get_renewal_events(indexer_id, args.hours):
+            events.append({
+                'type': 'eligibility',
+                'timestamp': renewal['timestamp'],
+                'tokens': '0',
+            })
+
     # Separate allocation events from delegation events
-    allocation_events = [e for e in events if e['type'] in ('allocate', 'unallocate', 'collect', 'resize')]
+    allocation_events = [e for e in events if e['type'] in ('allocate', 'unallocate', 'collect', 'resize', 'eligibility')]
     delegation_events = [e for e in events if e['type'] in ('delegate', 'undelegate')]
 
     if allocation_events:
         print_section(f"Allocation Activity ({args.hours}h)")
         allocation_events.sort(key=lambda x: x['timestamp'], reverse=True)
 
-        for event in allocation_events[:20]:
+        # Cap the allocation churn at 20 rows, but never let the (rare, and much
+        # more consequential) eligibility renewals be crowded out by it.
+        shown = allocation_events[:20]
+        extra = [e for e in allocation_events[20:] if e['type'] == 'eligibility']
+        if extra:
+            shown = sorted(shown + extra, key=lambda x: x['timestamp'], reverse=True)
+
+        for event in shown:
             ts = format_timestamp(str(event['timestamp']))
             tokens = format_tokens_short(event['tokens'])
 
@@ -1344,6 +1396,10 @@ Examples:
                 target = format_deployment_link(subgraph, subgraph_id) if subgraph != '?' else subgraph
                 rewards = event.get('rewards', 0) / 1e18
                 details = f"{rewards:,.0f} GRT collected"
+            elif event['type'] == 'eligibility':
+                symbol = f"{Colors.BRIGHT_GREEN}✓{Colors.RESET}"
+                target = "rewards eligibility"
+                details = f"{Colors.DIM}renewed by the oracle{Colors.RESET}"
             elif event['type'] == 'resize':
                 symbol = f"{Colors.BRIGHT_YELLOW}~{Colors.RESET}"
                 subgraph = event.get('subgraph', '?')

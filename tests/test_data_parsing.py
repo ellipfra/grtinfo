@@ -9,6 +9,7 @@ from The Graph Network subgraph and RPC endpoints, including edge cases.
 import pytest
 import sys
 import os
+import time
 from unittest.mock import Mock, patch, MagicMock
 
 # Add parent directory to path for imports
@@ -35,7 +36,8 @@ from tests.fixtures.rpc_responses import (
     PROVISION_NO_THAWING, PROVISION_WITH_THAWING,
 )
 
-from contracts import HorizonStakingClient, RewardsManagerClient
+from contracts import (HorizonStakingClient, RewardsManagerClient,
+                       RewardsEligibilityClient, derive_eligibility)
 
 
 class TestIndexerDataParsing:
@@ -557,6 +559,300 @@ class TestIssuancePerBlock:
         assert result['allocated'] == self.ALLOCATED
         assert result['total'] == self.RAW
         assert result['allocator'] == self.ALLOCATOR
+
+
+class TestRewardsEligibility:
+    """Tests for the Rewards Eligibility Oracle client (GIP-0079)"""
+
+    ORACLE = "0x02753bae61c08abd4351bce7f48524935c2cc78e"
+    INDEXER = "0xf92f430dd8567b0d466358c79594ab58d919a6d4"
+    PERIOD = 1_209_600   # 14 days
+    TIMEOUT = 604_800    # 7 days
+    NOW = 1_788_400_000
+
+    def _config(self, **overrides):
+        config = {
+            'oracle': self.ORACLE,
+            'validation_enabled': True,
+            'eligibility_period': self.PERIOD,
+            'oracle_timeout': self.TIMEOUT,
+            'last_oracle_update': self.NOW - 3600,
+            'revert_on_ineligible': True,
+        }
+        config.update(overrides)
+        return config
+
+    def _responses(self, oracle, renewal, is_eligible, validation=True,
+                   period=None, timeout=None, last_update=None, revert=True):
+        """Build an _eth_call side_effect table for the whole call sequence."""
+        from contracts import (
+            REWARDS_MANAGER,
+            GET_PROVIDER_ELIGIBILITY_ORACLE_SELECTOR,
+            GET_REVERT_ON_INELIGIBLE_SELECTOR,
+            GET_ELIGIBILITY_VALIDATION_SELECTOR,
+            GET_ELIGIBILITY_PERIOD_SELECTOR,
+            GET_ORACLE_UPDATE_TIMEOUT_SELECTOR,
+            GET_LAST_ORACLE_UPDATE_TIME_SELECTOR,
+            GET_ELIGIBILITY_RENEWAL_TIME_SELECTOR,
+            IS_ELIGIBLE_SELECTOR,
+        )
+        encoded = self.INDEXER.lower().replace("0x", "").zfill(64)
+        period = self.PERIOD if period is None else period
+        timeout = self.TIMEOUT if timeout is None else timeout
+        last_update = self.NOW - 3600 if last_update is None else last_update
+        table = {
+            (REWARDS_MANAGER, GET_PROVIDER_ELIGIBILITY_ORACLE_SELECTOR):
+                "0x" + (oracle or "0x0")[2:].zfill(64),
+            (REWARDS_MANAGER, GET_REVERT_ON_INELIGIBLE_SELECTOR): _uint256_hex(1 if revert else 0),
+            (self.ORACLE, GET_ELIGIBILITY_VALIDATION_SELECTOR): _uint256_hex(1 if validation else 0),
+            (self.ORACLE, GET_ELIGIBILITY_PERIOD_SELECTOR): _uint256_hex(period),
+            (self.ORACLE, GET_ORACLE_UPDATE_TIMEOUT_SELECTOR): _uint256_hex(timeout),
+            (self.ORACLE, GET_LAST_ORACLE_UPDATE_TIME_SELECTOR): _uint256_hex(last_update),
+            (self.ORACLE, GET_ELIGIBILITY_RENEWAL_TIME_SELECTOR + encoded): _uint256_hex(renewal),
+            (self.ORACLE, IS_ELIGIBLE_SELECTOR + encoded): _uint256_hex(1 if is_eligible else 0),
+        }
+        return lambda to, data, block="latest": table.get((to, data))
+
+    # -- pure helper ------------------------------------------------------
+
+    def test_derive_eligible_with_recent_renewal(self):
+        """A renewal inside the eligibility period keeps the indexer eligible"""
+        renewal = self.NOW - 86400
+        state = derive_eligibility(self._config(), renewal, self.NOW)
+        assert state['eligible'] is True
+        assert state['reason'] == 'renewed'
+        assert state['expires_at'] == renewal + self.PERIOD
+
+    def test_derive_expired_renewal_is_ineligible(self):
+        """A renewal older than the eligibility period makes the indexer ineligible"""
+        renewal = self.NOW - self.PERIOD - 2 * 86400
+        state = derive_eligibility(self._config(), renewal, self.NOW)
+        assert state['eligible'] is False
+        assert state['reason'] == 'expired'
+        assert state['expires_at'] == renewal + self.PERIOD
+
+    def test_derive_never_renewed(self):
+        """renewalTime == 0 means the oracle never renewed this indexer"""
+        state = derive_eligibility(self._config(), 0, self.NOW)
+        assert state['eligible'] is False
+        assert state['reason'] == 'never_renewed'
+        assert state['expires_at'] is None
+
+    def test_derive_validation_disabled(self):
+        """Validation disabled globally: everyone is eligible"""
+        state = derive_eligibility(self._config(validation_enabled=False), 0, self.NOW)
+        assert state['eligible'] is True
+        assert state['reason'] == 'validation_disabled'
+
+    def test_derive_oracle_stale_failsafe(self):
+        """A stale oracle cannot starve the network: everyone stays eligible"""
+        config = self._config(last_oracle_update=self.NOW - self.TIMEOUT - 86400)
+        state = derive_eligibility(config, 0, self.NOW)
+        assert state['eligible'] is True
+        assert state['reason'] == 'oracle_stale'
+        assert state['oracle_stale_for'] == self.TIMEOUT + 86400
+
+    def test_derive_no_oracle_configured(self):
+        """No oracle on the RewardsManager: eligibility is not enforced"""
+        state = derive_eligibility(self._config(oracle=None), 0, self.NOW)
+        assert state['eligible'] is True
+        assert state['reason'] == 'no_oracle'
+
+    def test_derive_without_config_is_permissive(self):
+        """A missing config must never be reported as ineligible"""
+        state = derive_eligibility(None, 0, self.NOW)
+        assert state['eligible'] is True
+        assert state['reason'] == 'no_oracle'
+
+    # -- client -----------------------------------------------------------
+
+    def test_config_reads_oracle_and_parameters(self):
+        client = RewardsEligibilityClient("http://fake-rpc")
+        fake = self._responses(self.ORACLE, self.NOW - 86400, True)
+        with patch.object(client, '_eth_call', side_effect=fake):
+            config = client.get_oracle_config()
+
+        assert config == {
+            'oracle': self.ORACLE,
+            'validation_enabled': True,
+            'eligibility_period': self.PERIOD,
+            'oracle_timeout': self.TIMEOUT,
+            'last_oracle_update': self.NOW - 3600,
+            'revert_on_ineligible': True,
+        }
+
+    def test_config_is_cached(self):
+        """The oracle config is read once per client instance"""
+        client = RewardsEligibilityClient("http://fake-rpc")
+        fake = self._responses(self.ORACLE, 0, False)
+        with patch.object(client, '_eth_call', side_effect=fake) as call:
+            client.get_oracle_config()
+            calls_after_first = call.call_count
+            client.get_oracle_config()
+            assert call.call_count == calls_after_first
+
+    def test_indexer_eligible_with_renewal(self):
+        client = RewardsEligibilityClient("http://fake-rpc")
+        renewal = int(time.time()) - 86400
+        fake = self._responses(self.ORACLE, renewal, True)
+        with patch.object(client, '_eth_call', side_effect=fake):
+            state = client.get_indexer_eligibility(self.INDEXER)
+
+        assert state['eligible'] is True
+        assert state['reason'] == 'renewed'
+        assert state['renewal_time'] == renewal
+
+    def test_indexer_expired_renewal(self):
+        client = RewardsEligibilityClient("http://fake-rpc")
+        now = int(time.time())
+        renewal = now - self.PERIOD - 2 * 86400
+        fake = self._responses(self.ORACLE, renewal, False, last_update=now - 3600)
+        with patch.object(client, '_eth_call', side_effect=fake):
+            state = client.get_indexer_eligibility(self.INDEXER)
+
+        assert state['eligible'] is False
+        assert state['reason'] == 'expired'
+
+    def test_indexer_never_renewed(self):
+        client = RewardsEligibilityClient("http://fake-rpc")
+        fake = self._responses(self.ORACLE, 0, False, last_update=int(time.time()) - 3600)
+        with patch.object(client, '_eth_call', side_effect=fake):
+            state = client.get_indexer_eligibility(self.INDEXER)
+
+        assert state['eligible'] is False
+        assert state['reason'] == 'never_renewed'
+
+    def test_validation_disabled_skips_indexer_lookup(self):
+        """With validation off, everyone is eligible whatever the renewal time"""
+        client = RewardsEligibilityClient("http://fake-rpc")
+        fake = self._responses(self.ORACLE, 0, True, validation=False,
+                               last_update=int(time.time()) - 3600)
+        with patch.object(client, '_eth_call', side_effect=fake):
+            state = client.get_indexer_eligibility(self.INDEXER)
+
+        assert state['eligible'] is True
+        assert state['reason'] == 'validation_disabled'
+
+    def test_oracle_stale_failsafe_via_client(self):
+        client = RewardsEligibilityClient("http://fake-rpc")
+        now = int(time.time())
+        fake = self._responses(self.ORACLE, 0, True,
+                               last_update=now - self.TIMEOUT - 86400)
+        with patch.object(client, '_eth_call', side_effect=fake):
+            state = client.get_indexer_eligibility(self.INDEXER)
+
+        assert state['eligible'] is True
+        assert state['reason'] == 'oracle_stale'
+
+    def test_no_oracle_configured_via_client(self):
+        """A zero oracle address means eligibility is not enforced at all"""
+        client = RewardsEligibilityClient("http://fake-rpc")
+        fake = self._responses(None, 0, False)
+        with patch.object(client, '_eth_call', side_effect=fake):
+            config = client.get_oracle_config()
+            state = client.get_indexer_eligibility(self.INDEXER)
+
+        assert config['oracle'] is None
+        assert state['eligible'] is True
+        assert state['reason'] == 'no_oracle'
+
+    def test_rpc_failure_returns_none(self):
+        """Tools must keep working (and show nothing) when the RPC is down"""
+        client = RewardsEligibilityClient("http://fake-rpc")
+        with patch.object(client, '_eth_call', return_value=None):
+            assert client.get_oracle_config() is None
+            assert client.get_indexer_eligibility(self.INDEXER) is None
+            assert client.get_eligibility_batch([self.INDEXER]) == {}
+
+    def test_batch_uses_single_rpc_request(self):
+        """get_eligibility_batch issues one batched eth_call request"""
+        client = RewardsEligibilityClient("http://fake-rpc")
+        now = int(time.time())
+        renewal = now - 86400
+        client._config = {
+            'oracle': self.ORACLE,
+            'validation_enabled': True,
+            'eligibility_period': self.PERIOD,
+            'oracle_timeout': self.TIMEOUT,
+            'last_oracle_update': now - 3600,
+            'revert_on_ineligible': True,
+        }
+        client._config_loaded = True
+
+        other = "0x1111111111111111111111111111111111111111"
+        response = Mock()
+        response.raise_for_status = Mock()
+        # ids: 2i = isEligible, 2i+1 = renewal time, in sorted-address order
+        response.json = Mock(return_value=[
+            {"id": 0, "result": _uint256_hex(0)},
+            {"id": 1, "result": _uint256_hex(0)},
+            {"id": 2, "result": _uint256_hex(1)},
+            {"id": 3, "result": _uint256_hex(renewal)},
+        ])
+        with patch.object(client._session, 'post', return_value=response) as post:
+            result = client.get_eligibility_batch([self.INDEXER.upper(), other])
+
+        assert post.call_count == 1
+        assert len(post.call_args[1]['json']) == 4
+        assert result[other]['eligible'] is False
+        assert result[other]['reason'] == 'never_renewed'
+        assert result[self.INDEXER]['eligible'] is True
+        assert result[self.INDEXER]['reason'] == 'renewed'
+
+    def test_batch_falls_back_to_sequential_calls(self):
+        """A failing batch request must not lose the eligibility data"""
+        client = RewardsEligibilityClient("http://fake-rpc")
+        now = int(time.time())
+        fake = self._responses(self.ORACLE, now - 86400, True, last_update=now - 3600)
+        with patch.object(client, '_eth_call', side_effect=fake):
+            with patch.object(client._session, 'post', side_effect=Exception("boom")):
+                result = client.get_eligibility_batch([self.INDEXER])
+
+        assert result[self.INDEXER]['reason'] == 'renewed'
+
+    def test_empty_batch_returns_empty_dict(self):
+        client = RewardsEligibilityClient("http://fake-rpc")
+        assert client.get_eligibility_batch([]) == {}
+
+
+class TestEligibilityFormatting:
+    """Tests for the shared eligibility display helper"""
+
+    NOW = 1_788_400_000
+
+    def _fmt(self, state, style):
+        from common import format_eligibility, strip_ansi
+        return strip_ansi(format_eligibility(state, style, now=self.NOW))
+
+    def test_full_renewed(self):
+        state = {'eligible': True, 'reason': 'renewed',
+                 'renewal_time': self.NOW - 27 * 3600,
+                 'expires_at': self.NOW + int(12.9 * 86400)}
+        assert self._fmt(state, 'full') == "ELIGIBLE (renewed 27h ago, expires in 12.9d)"
+
+    def test_full_never_renewed(self):
+        state = {'eligible': False, 'reason': 'never_renewed',
+                 'renewal_time': 0, 'expires_at': None}
+        assert self._fmt(state, 'full') == "NOT ELIGIBLE (never renewed by the oracle)"
+
+    def test_short_expired(self):
+        state = {'eligible': False, 'reason': 'expired',
+                 'renewal_time': self.NOW - 16 * 86400,
+                 'expires_at': self.NOW - 2 * 86400}
+        assert self._fmt(state, 'short') == "NOT ELIGIBLE (expired 2.0d ago)"
+
+    def test_compact_is_empty_when_eligible(self):
+        state = {'eligible': True, 'reason': 'renewed',
+                 'renewal_time': self.NOW - 3600, 'expires_at': self.NOW + 86400 * 13}
+        assert self._fmt(state, 'compact') == ""
+
+    def test_compact_marks_ineligible(self):
+        state = {'eligible': False, 'reason': 'never_renewed',
+                 'renewal_time': 0, 'expires_at': None}
+        assert "ineligible" in self._fmt(state, 'compact')
+
+    def test_none_state_renders_nothing(self):
+        assert self._fmt(None, 'full') == ""
 
 
 class TestTotalSignalledTokens:

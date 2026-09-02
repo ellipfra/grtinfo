@@ -224,6 +224,112 @@ def format_time_left(seconds_left: float, colors: type = Colors) -> str:
     return f"{color}{format_duration(seconds_left)} left{colors.RESET}"
 
 
+# =============================================================================
+# Rewards Eligibility Oracle (GIP-0079) display helpers
+# =============================================================================
+# An ineligible indexer mints no indexing rewards at all, for itself and for its
+# delegators, so the reason behind the boolean matters: the oracle answers "yes"
+# both when the indexer earned it and when a global fail-safe is active.
+
+# Remaining eligibility below which we warn (the oracle renews roughly daily,
+# so under 4 days means a couple of missed runs away from losing rewards).
+ELIGIBILITY_WARN_SECONDS = 4 * 86400
+
+
+def format_span(seconds: float) -> str:
+    """Compact span used by the eligibility lines: "27h" under 2 days, else "12.9d"."""
+    seconds = max(0, int(seconds))
+    if seconds < 2 * 86400:
+        return f"{seconds // 3600}h"
+    return f"{seconds / 86400:.1f}d"
+
+
+def _eligibility_detail(state: dict, now: float) -> str:
+    """Uncolored parenthetical explaining why an indexer is (in)eligible."""
+    reason = state.get('reason')
+    renewal = state.get('renewal_time') or 0
+    expires_at = state.get('expires_at')
+
+    if reason == 'renewed':
+        return (f"renewed {format_span(now - renewal)} ago, "
+                f"expires in {format_span(expires_at - now)}")
+    if reason == 'expired':
+        return (f"renewed {format_span(now - renewal)} ago "
+                f"(expired {format_span(now - expires_at)} ago)")
+    if reason == 'never_renewed':
+        return "never renewed by the oracle"
+    if reason == 'validation_disabled':
+        return "eligibility validation disabled"
+    if reason == 'oracle_stale':
+        stale_for = state.get('oracle_stale_for')
+        stale_str = f" since {format_span(stale_for)}" if stale_for else ""
+        return f"oracle stale{stale_str}: everyone eligible"
+    if reason == 'no_oracle':
+        return "no eligibility oracle configured"
+    return ""
+
+
+def format_eligibility(state: Optional[dict], style: str = 'full',
+                       now: Optional[float] = None, colors: type = Colors) -> str:
+    """Render an eligibility state from RewardsEligibilityClient.
+
+    Args:
+        state: eligibility dict, or None when it could not be determined
+        style: 'full' (indexerinfo overview line), 'short' (delegator table tag)
+               or 'compact' (subinfo allocation row marker, empty when eligible)
+        now: current unix timestamp (defaults to time.time())
+    Returns:
+        Colored string, possibly empty.
+    """
+    if not state:
+        return ""
+    if now is None:
+        now = datetime.now().timestamp()
+
+    eligible = state.get('eligible', False)
+    reason = state.get('reason')
+    failsafe = reason in ('validation_disabled', 'oracle_stale', 'no_oracle')
+    detail = _eligibility_detail(state, now)
+
+    # Warn while still eligible but close to expiry: the indexer needs a renewal.
+    warning = False
+    if eligible and reason == 'renewed' and state.get('expires_at'):
+        warning = (state['expires_at'] - now) <= ELIGIBILITY_WARN_SECONDS
+
+    if style == 'compact':
+        if eligible:
+            return ""
+        return f"  {colors.BRIGHT_RED}✗ ineligible{colors.RESET}"
+
+    if style == 'short':
+        if not eligible:
+            # Condensed detail: the delegator table has no room for the renewal date.
+            if reason == 'expired' and state.get('expires_at'):
+                short_detail = f"expired {format_span(now - state['expires_at'])} ago"
+            elif reason == 'never_renewed':
+                short_detail = "never renewed"
+            else:
+                short_detail = detail
+            suffix = f" ({short_detail})" if short_detail else ""
+            return f"{colors.BRIGHT_RED}NOT ELIGIBLE{suffix}{colors.RESET}"
+        if failsafe:
+            return f"{colors.DIM}eligible{colors.RESET}"
+        if warning:
+            return f"{colors.BRIGHT_YELLOW}eligible ({detail}){colors.RESET}"
+        return f"{colors.BRIGHT_GREEN}eligible{colors.RESET}"
+
+    # style == 'full'
+    if eligible:
+        color = colors.BRIGHT_YELLOW if warning else colors.BRIGHT_GREEN
+        label = f"{color}ELIGIBLE{colors.RESET}"
+    else:
+        label = f"{colors.BRIGHT_RED}NOT ELIGIBLE{colors.RESET}"
+    if detail:
+        detail_color = colors.BRIGHT_YELLOW if warning else colors.DIM
+        return f"{label} {detail_color}({detail}){colors.RESET}"
+    return label
+
+
 def print_section(title: str, colors: type = Colors):
     """Display a compact section title with color
     

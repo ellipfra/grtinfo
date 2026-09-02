@@ -32,14 +32,14 @@ from common import (
     Colors, terminal_link, format_deployment_link,
     format_tokens, format_timestamp, format_duration,
     allocation_anchor, allocation_deadline, format_time_left,
-    print_section, strip_ansi, get_display_width
+    print_section, strip_ansi, get_display_width, format_eligibility
 )
 from config import get_network_subgraph_url, get_ens_subgraph_url, get_my_indexer_id, get_analytics_subgraph_url, get_rpc_url
 from ens_client import ENSClient
 from sync_status import IndexerStatusClient, format_sync_status as _format_sync_status
 from rewards import get_accrued_rewards, get_indexer_reward_cut
 from contracts import (
-    AllocationResizeClient, HorizonStakingClient,
+    AllocationResizeClient, HorizonStakingClient, RewardsEligibilityClient,
     MAX_POI_STALENESS_SECONDS, MAX_ALLOCATION_EPOCHS, EPOCH_DURATION_SECONDS,
 )
 from logger import setup_logging, get_logger
@@ -1286,6 +1286,23 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
     if sync_errors is None:
         sync_errors = {}
     
+    # Rewards eligibility (GIP-0079) for the distinct indexers on this deployment.
+    # NOTE: an ineligible indexer's allocation still counts in the deployment's
+    # stakedTokens, so it keeps diluting everyone else's share. Reward Proportion
+    # and the per-allocation reward split below are therefore unchanged; those
+    # rewards are simply never minted.
+    eligibility_map = {}
+    eligibility_config = None
+    try:
+        rpc_url = get_rpc_url()
+        if rpc_url:
+            elig_client = RewardsEligibilityClient(rpc_url)
+            eligibility_config = elig_client.get_oracle_config()
+            eligibility_map = elig_client.get_eligibility_batch(
+                [a for a in indexer_addresses if a])
+    except Exception as e:
+        log.debug(f"Eligibility lookup failed: {e}")
+
     # Track allocation lines for later updates
     allocation_lines = []
     
@@ -1390,6 +1407,11 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
         else:
             sync_indicator = ""
         
+        # Compact eligibility marker (empty string when eligible, to keep the
+        # table readable: only the exceptions are worth a column).
+        elig_state = eligibility_map.get(indexer_id.lower())
+        elig_marker = format_eligibility(elig_state, 'compact') if elig_state else ""
+
         # Calculate padding accounting for ANSI codes
         marker_width = get_display_width(marker)
         indexer_display_width = get_display_width(indexer_display)
@@ -1402,9 +1424,9 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
         
         if alloc.get('closedAt'):
             closed = format_timestamp(str(alloc.get('closedAt', '0')))[:16]
-            print(f"  {marker}{' ' * marker_padding}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_GREEN}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  {Colors.DIM}{created}{Colors.RESET}  {status_color}{status}{Colors.RESET}")
+            print(f"  {marker}{' ' * marker_padding}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_GREEN}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  {Colors.DIM}{created}{Colors.RESET}  {status_color}{status}{Colors.RESET}{elig_marker}")
         else:
-            print(f"  {marker}{' ' * marker_padding}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_GREEN}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  {Colors.DIM}{created}{Colors.RESET}  {status_color}{status}{Colors.RESET}{Colors.DIM}{duration_str}{Colors.RESET}{sync_indicator}{poi_warning}")
+            print(f"  {marker}{' ' * marker_padding}  {indexer_color}{indexer_display}{' ' * indexer_padding}{Colors.RESET}  {Colors.BRIGHT_GREEN}{' ' * tokens_padding}{tokens_str}{Colors.RESET}  {Colors.DIM}{created}{Colors.RESET}  {status_color}{status}{Colors.RESET}{Colors.DIM}{duration_str}{Colors.RESET}{sync_indicator}{poi_warning}{elig_marker}")
             # Track for compatibility (not used anymore)
             allocation_lines.append({
                 'indexer_id': indexer_id.lower(),
@@ -1413,6 +1435,21 @@ def print_allocations(allocations: List[Dict], title: str, my_indexer_id: Option
     
     print(f"{Colors.BOLD}Total: {Colors.BRIGHT_GREEN}{format_tokens(str(int(total * 1e18)))}{Colors.RESET}")
     lines_after += 1  # Total line
+
+    # Eligibility legend: only shown when at least one indexer is ineligible.
+    shown_indexers = {a.lower() for a in indexer_addresses if a}
+    ineligible = [a for a, st in eligibility_map.items()
+                  if a in shown_indexers and not st.get('eligible')]
+    if ineligible:
+        if eligibility_config and eligibility_config.get('revert_on_ineligible'):
+            consequence = "their POIs revert, no rewards are minted"
+        else:
+            consequence = "their rewards are reclaimed by the protocol"
+        print(f"{Colors.BRIGHT_RED}✗ ineligible{Colors.RESET}: "
+              f"{len(ineligible)} of {len(shown_indexers)} indexers on this deployment "
+              f"are not eligible for indexing rewards "
+              f"{Colors.DIM}({consequence}; their stake still dilutes everyone else's share){Colors.RESET}")
+        lines_after += 1
     
     # Display accrued rewards for my allocation
     if my_indexer_id and my_allocation_id:

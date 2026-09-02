@@ -31,6 +31,11 @@ HORIZON_REWARD_ASSIGNED_TOPIC = "0xa111914d7f2ea8beca61d12f1a1f38c5533de5f1823c3
 # AllocationResized(address indexed indexer, address indexed allocationId, bytes32 indexed subgraphDeploymentId, uint256 newTokens, uint256 oldTokens)
 ALLOCATION_RESIZED_TOPIC = "0x6db4a6f9be2d5e72eb2a2af2374ac487971bf342a261ba0bc1cf471bf2a2c31f"
 
+# IndexerEligibilityRenewed(address indexed indexer, address indexed oracle)
+# Emitted by the RewardsEligibilityOracle (GIP-0079) each time it renews an
+# indexer's rewards eligibility.
+INDEXER_ELIGIBILITY_RENEWED_TOPIC = "0xbaf783ed4f4280852e5630223d966efd3c385bebebc564d77dcc52bb37f482eb"
+
 
 # =============================================================================
 # Function Selectors (first 4 bytes of keccak256 of function signature)
@@ -77,6 +82,43 @@ GET_DELEGATION_RATIO_SELECTOR = "0x1ebb7c30"
 # Seconds allowed since the last POI presentation before a Horizon allocation
 # stops earning indexing rewards (goes "stale").
 GET_MAX_POI_STALENESS_SELECTOR = "0x85e82baf"
+
+# --- Rewards Eligibility Oracle (GIP-0079) -----------------------------------
+
+# RewardsManager.getProviderEligibilityOracle() returns (address)
+# Address of the RewardsEligibilityOracle. The zero address means no oracle is
+# configured, i.e. every indexer is eligible. Read it on-chain: governance can
+# swap or unset the oracle at any time.
+GET_PROVIDER_ELIGIBILITY_ORACLE_SELECTOR = "0x20618c0f"
+
+# RewardsManager.getRevertOnIneligible() returns (bool)
+# When true, collecting rewards for an ineligible indexer reverts with
+# "Indexer not eligible for rewards" (the POI transaction fails and nothing is
+# minted). When false, the rewards are reclaimed by the protocol instead.
+GET_REVERT_ON_INELIGIBLE_SELECTOR = "0x53fc8cb5"
+
+# RewardsEligibilityOracle.isEligible(address) returns (bool)
+IS_ELIGIBLE_SELECTOR = "0x66e305fd"
+
+# RewardsEligibilityOracle.getEligibilityRenewalTime(address) returns (uint256)
+# Unix timestamp of the last renewal for that indexer (0 if never renewed).
+GET_ELIGIBILITY_RENEWAL_TIME_SELECTOR = "0xd353402d"
+
+# RewardsEligibilityOracle.getEligibilityPeriod() returns (uint256)
+# Seconds a renewal stays valid (14 days on mainnet).
+GET_ELIGIBILITY_PERIOD_SELECTOR = "0xd0a5379e"
+
+# RewardsEligibilityOracle.getOracleUpdateTimeout() returns (uint256)
+# Seconds without an oracle run after which the fail-safe kicks in and everyone
+# becomes eligible (7 days on mainnet).
+GET_ORACLE_UPDATE_TIMEOUT_SELECTOR = "0x20ea3509"
+
+# RewardsEligibilityOracle.getLastOracleUpdateTime() returns (uint256)
+GET_LAST_ORACLE_UPDATE_TIME_SELECTOR = "0xbe626dd2"
+
+# RewardsEligibilityOracle.getEligibilityValidation() returns (bool)
+# When false, eligibility checking is disabled entirely and everyone is eligible.
+GET_ELIGIBILITY_VALIDATION_SELECTOR = "0xce0a2071"
 
 
 # =============================================================================
@@ -512,3 +554,330 @@ class AllocationResizeClient:
         topics = [ALLOCATION_RESIZED_TOPIC, indexer_topic]
         return self._fetch_resizes(topics, hours)
 
+
+# =============================================================================
+# RewardsEligibilityClient - Rewards Eligibility Oracle (GIP-0079)
+# =============================================================================
+# The RewardsManager delegates the "may this indexer receive indexing rewards?"
+# question to a RewardsEligibilityOracle (REO). The oracle renews an indexer's
+# eligibility when it served at least one valid query on 5 distinct days over a
+# rolling 28-day window; it runs roughly daily. A renewal is valid for
+# getEligibilityPeriod() seconds (14 days on mainnet).
+#
+# isEligible(indexer) is true when ANY of these holds:
+#   1. eligibility validation is globally disabled (getEligibilityValidation() false)
+#   2. the oracle itself is stale: lastOracleUpdateTime + oracleUpdateTimeout < now
+#      (fail-safe so a broken oracle cannot starve the whole network)
+#   3. now < renewalTime + eligibilityPeriod
+# The boolean alone is therefore ambiguous, which is why this client always
+# reports the REASON alongside it.
+#
+# When RewardsManager.getRevertOnIneligible() is true, a POI presented by an
+# ineligible indexer REVERTS ("Indexer not eligible for rewards") and nothing is
+# minted; when false the rewards are reclaimed by the protocol instead. Either
+# way the indexer (and its delegators) get nothing.
+#
+# There is no eligibility data in the network subgraph: everything below goes
+# through the RPC, and every call fails soft (returns None) so the CLI tools keep
+# working without an RPC.
+
+# Reasons returned by derive_eligibility()
+ELIGIBILITY_REASONS = (
+    'renewed',              # eligible: renewal still within the eligibility period
+    'expired',             # NOT eligible: renewal older than the eligibility period
+    'never_renewed',       # NOT eligible: the oracle never renewed this indexer
+    'validation_disabled',  # eligible: validation globally disabled on the oracle
+    'oracle_stale',         # eligible: oracle has not run within its timeout (fail-safe)
+    'no_oracle',            # eligible: no oracle configured on the RewardsManager
+)
+
+# Reasons that mean "eligible because of a global fail-safe", not because this
+# particular indexer earned it.
+ELIGIBILITY_FAILSAFE_REASONS = ('validation_disabled', 'oracle_stale', 'no_oracle')
+
+
+def derive_eligibility(config: Optional[Dict], renewal_time: int, now: int) -> Dict:
+    """Derive (eligible, reason, expires_at) from the oracle config and a renewal time.
+
+    Pure helper mirroring RewardsEligibilityOracle.isEligible(), evaluated in the
+    same short-circuit order as the contract so the reason we display matches the
+    branch that actually granted (or denied) eligibility.
+
+    Args:
+        config: dict from RewardsEligibilityClient.get_oracle_config(), or None
+        renewal_time: unix timestamp of the last renewal for the indexer (0 = never)
+        now: current unix timestamp
+
+    Returns:
+        dict with 'eligible', 'renewal_time', 'expires_at' (None when unknown)
+        and 'reason' (one of ELIGIBILITY_REASONS)
+    """
+    renewal_time = int(renewal_time or 0)
+
+    def result(eligible, reason, expires_at=None):
+        return {
+            'eligible': eligible,
+            'reason': reason,
+            'renewal_time': renewal_time,
+            'expires_at': expires_at,
+        }
+
+    if not config or not config.get('oracle'):
+        return result(True, 'no_oracle')
+
+    if not config.get('validation_enabled'):
+        return result(True, 'validation_disabled')
+
+    timeout = int(config.get('oracle_timeout') or 0)
+    last_update = int(config.get('last_oracle_update') or 0)
+    if timeout > 0 and last_update + timeout < now:
+        # Oracle fail-safe: nobody can be denied while the oracle is down.
+        state = result(True, 'oracle_stale')
+        state['oracle_stale_for'] = max(0, now - last_update)
+        return state
+
+    if renewal_time <= 0:
+        return result(False, 'never_renewed')
+
+    period = int(config.get('eligibility_period') or 0)
+    expires_at = renewal_time + period
+    if now < expires_at:
+        return result(True, 'renewed', expires_at)
+    return result(False, 'expired', expires_at)
+
+
+class RewardsEligibilityClient(ContractCallClient):
+    """Read indexer rewards eligibility from the RewardsEligibilityOracle (GIP-0079)."""
+
+    def __init__(self, rpc_url: str):
+        super().__init__(rpc_url)
+        self._config: Optional[Dict] = None
+        self._config_loaded = False
+        self._session = requests.Session()
+
+    # -- configuration --------------------------------------------------------
+
+    def _decode_bool(self, hex_data: Optional[str]) -> Optional[bool]:
+        if not hex_data or hex_data == "0x":
+            return None
+        try:
+            return int(hex_data, 16) != 0
+        except ValueError:
+            return None
+
+    def _decode_address(self, hex_data: Optional[str]) -> Optional[str]:
+        """Decode an address return value; None for the zero address or garbage."""
+        if not hex_data or len(hex_data) < 42:
+            return None
+        addr = "0x" + hex_data[-40:]
+        try:
+            if int(addr, 16) == 0:
+                return None
+        except ValueError:
+            return None
+        return addr
+
+    def get_oracle_config(self) -> Optional[Dict]:
+        """Return the oracle configuration, or None if the RPC is unusable.
+
+        Cached on the instance. Returned dict:
+            'oracle':              REO address, or None when no oracle is configured
+            'validation_enabled':  getEligibilityValidation()
+            'eligibility_period':  seconds a renewal stays valid
+            'oracle_timeout':      seconds before the oracle-stale fail-safe triggers
+            'last_oracle_update':  unix timestamp of the last oracle run
+            'revert_on_ineligible': whether a POI from an ineligible indexer reverts
+        """
+        if self._config_loaded:
+            return self._config
+
+        self._config_loaded = True
+
+        oracle_hex = self._eth_call(REWARDS_MANAGER, GET_PROVIDER_ELIGIBILITY_ORACLE_SELECTOR)
+        if oracle_hex is None:
+            # RPC failure (an unset oracle still returns 32 zero bytes)
+            self._config_loaded = False
+            return None
+
+        oracle = self._decode_address(oracle_hex)
+        revert_on_ineligible = self._decode_bool(
+            self._eth_call(REWARDS_MANAGER, GET_REVERT_ON_INELIGIBLE_SELECTOR))
+
+        if oracle is None:
+            self._config = {
+                'oracle': None,
+                'validation_enabled': False,
+                'eligibility_period': 0,
+                'oracle_timeout': 0,
+                'last_oracle_update': 0,
+                'revert_on_ineligible': bool(revert_on_ineligible),
+            }
+            return self._config
+
+        validation = self._decode_bool(self._eth_call(oracle, GET_ELIGIBILITY_VALIDATION_SELECTOR))
+        period_hex = self._eth_call(oracle, GET_ELIGIBILITY_PERIOD_SELECTOR)
+        timeout_hex = self._eth_call(oracle, GET_ORACLE_UPDATE_TIMEOUT_SELECTOR)
+        last_update_hex = self._eth_call(oracle, GET_LAST_ORACLE_UPDATE_TIME_SELECTOR)
+
+        self._config = {
+            'oracle': oracle,
+            # A missing answer must not silently disable eligibility display:
+            # default to "validation enabled" and let the period/timeout be 0.
+            'validation_enabled': True if validation is None else validation,
+            'eligibility_period': self._decode_uint256(period_hex) if period_hex else 0,
+            'oracle_timeout': self._decode_uint256(timeout_hex) if timeout_hex else 0,
+            'last_oracle_update': self._decode_uint256(last_update_hex) if last_update_hex else 0,
+            'revert_on_ineligible': bool(revert_on_ineligible),
+        }
+        return self._config
+
+    # -- per-indexer eligibility ---------------------------------------------
+
+    def get_indexer_eligibility(self, indexer: str) -> Optional[Dict]:
+        """Return the eligibility state of one indexer, or None on RPC failure.
+
+        Returns a dict with 'eligible', 'reason', 'renewal_time' and 'expires_at'
+        (see derive_eligibility).
+        """
+        config = self.get_oracle_config()
+        if config is None:
+            return None
+
+        now = int(time.time())
+        if not config.get('oracle'):
+            return derive_eligibility(config, 0, now)
+
+        oracle = config['oracle']
+        renewal_hex = self._eth_call(
+            oracle, GET_ELIGIBILITY_RENEWAL_TIME_SELECTOR + self._encode_address(indexer))
+        if renewal_hex is None:
+            return None
+        renewal_time = self._decode_uint256(renewal_hex)
+
+        state = derive_eligibility(config, renewal_time, now)
+        onchain = self._decode_bool(
+            self._eth_call(oracle, IS_ELIGIBLE_SELECTOR + self._encode_address(indexer)))
+        if onchain is not None and onchain != state['eligible']:
+            # Trust the contract; keep our derived reason as the best explanation.
+            log.debug(f"isEligible({indexer})={onchain} disagrees with derived "
+                      f"{state['eligible']} ({state['reason']})")
+            state['eligible'] = onchain
+        return state
+
+    def get_eligibility_batch(self, indexers: List[str]) -> Dict[str, Dict]:
+        """Return {lowercase indexer address -> eligibility dict} for many indexers.
+
+        Uses a single batch JSON-RPC request (isEligible + getEligibilityRenewalTime
+        per indexer) and falls back to sequential calls if the batch fails.
+        Indexers whose calls fail are simply absent from the result.
+        """
+        if not indexers:
+            return {}
+
+        config = self.get_oracle_config()
+        if config is None:
+            return {}
+
+        now = int(time.time())
+        unique = sorted({a.lower() for a in indexers if a})
+
+        if not config.get('oracle'):
+            state = derive_eligibility(config, 0, now)
+            return {addr: dict(state) for addr in unique}
+
+        oracle = config['oracle']
+        batch = []
+        for i, addr in enumerate(unique):
+            encoded = self._encode_address(addr)
+            batch.append({
+                "jsonrpc": "2.0", "method": "eth_call", "id": 2 * i,
+                "params": [{"to": oracle, "data": IS_ELIGIBLE_SELECTOR + encoded}, "latest"],
+            })
+            batch.append({
+                "jsonrpc": "2.0", "method": "eth_call", "id": 2 * i + 1,
+                "params": [{"to": oracle,
+                            "data": GET_ELIGIBILITY_RENEWAL_TIME_SELECTOR + encoded}, "latest"],
+            })
+
+        by_id: Dict[int, str] = {}
+        try:
+            response = self._session.post(self.rpc_url, json=batch, timeout=30)
+            response.raise_for_status()
+            for res in response.json():
+                if isinstance(res, dict) and "result" in res and res.get("id") is not None:
+                    by_id[int(res["id"])] = res["result"]
+        except Exception as e:
+            log.debug(f"Batch eligibility call failed, falling back to sequential: {e}")
+            by_id = {}
+
+        results: Dict[str, Dict] = {}
+        for i, addr in enumerate(unique):
+            renewal_hex = by_id.get(2 * i + 1)
+            if renewal_hex is None:
+                # Sequential fallback for this indexer
+                state = self.get_indexer_eligibility(addr)
+                if state is not None:
+                    results[addr] = state
+                continue
+            state = derive_eligibility(config, self._decode_uint256(renewal_hex), now)
+            onchain = self._decode_bool(by_id.get(2 * i))
+            if onchain is not None:
+                state['eligible'] = onchain
+            results[addr] = state
+        return results
+
+    # -- renewal events -------------------------------------------------------
+
+    def get_renewal_events(self, indexer: str, hours: int = 48) -> List[Dict]:
+        """Fetch IndexerEligibilityRenewed logs for one indexer over the last `hours`.
+
+        Returns a list of {'timestamp', 'block_number'} dicts (empty on any failure).
+        """
+        config = self.get_oracle_config()
+        if not config or not config.get('oracle'):
+            return []
+
+        payload = {"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1}
+        try:
+            resp = self._session.post(self.rpc_url, json=payload, timeout=10)
+            resp.raise_for_status()
+            current_block = int(resp.json()["result"], 16)
+        except Exception as e:
+            log.debug(f"Failed to get block number for eligibility events: {e}")
+            return []
+
+        blocks_per_second = 4  # Arbitrum ~0.25s per block
+        from_block = max(0, current_block - int(hours * 3600 * blocks_per_second))
+        params = [{
+            "address": config['oracle'],
+            "topics": [INDEXER_ELIGIBILITY_RENEWED_TOPIC, pad_address(indexer)],
+            "fromBlock": hex(from_block),
+            "toBlock": hex(current_block),
+        }]
+        try:
+            resp = self._session.post(
+                self.rpc_url,
+                json={"jsonrpc": "2.0", "method": "eth_getLogs", "params": params, "id": 1},
+                timeout=20)
+            resp.raise_for_status()
+            body = resp.json()
+            if "error" in body:
+                return []
+            logs = body.get("result") or []
+        except Exception as e:
+            log.debug(f"Failed to fetch IndexerEligibilityRenewed logs: {e}")
+            return []
+
+        if not logs:
+            return []
+
+        block_numbers = [int(entry["blockNumber"], 16) for entry in logs]
+        timestamps = AllocationResizeClient(self.rpc_url)._get_block_timestamps(block_numbers)
+        now = int(time.time())
+        events = []
+        for bn in block_numbers:
+            ts = timestamps.get(bn)
+            if ts is None:
+                ts = now - int((current_block - bn) / blocks_per_second)
+            events.append({'block_number': bn, 'timestamp': ts})
+        return events

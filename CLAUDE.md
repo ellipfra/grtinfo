@@ -67,6 +67,13 @@ The codebase consists of three main CLI tools that share common infrastructure:
 ### Indexing Rewards Issuance
 Since the GIP-0086/0088 upgrade, the RewardsManager only mints the share of protocol issuance that the IssuanceAllocator assigns to it (`getAllocatedIssuancePerBlock()`); the rest goes to other targets (GIP-0089 Innovation Allocation, 20% since 2026-08-31). The subgraph's `networkGRTIssuancePerBlock` is the raw pre-split value. Always use `RewardsManagerClient.get_issuance_per_block()` from `contracts.py` for reward/APR projections, with the subgraph value only as a fallback.
 
+### Rewards Eligibility Oracle (GIP-0079)
+The RewardsManager only mints indexing rewards for indexers the RewardsEligibilityOracle (REO) considers eligible. The REO address must be read on-chain via `RewardsManager.getProviderEligibilityOracle()` (governance can swap or unset it; the zero address means eligibility is not enforced). The oracle renews an indexer that served at least one valid query on 5 distinct days in a rolling 28-day window, and runs roughly daily; a renewal is valid for `getEligibilityPeriod()` (14 days on mainnet).
+
+`isEligible(indexer)` is true when ANY of: eligibility validation is globally disabled, the oracle itself is stale (`lastOracleUpdateTime + oracleUpdateTimeout < now`, a fail-safe), or `now < renewalTime + eligibilityPeriod`. The boolean alone is therefore ambiguous — **always display the reason**, not just eligible/ineligible. When `RewardsManager.getRevertOnIneligible()` is true, an ineligible indexer's POI transaction reverts with "Indexer not eligible for rewards" and nothing is minted; when false the rewards are reclaimed by the protocol. Either way the indexer and its delegators get 0.
+
+There is no eligibility data in the network subgraph: use `RewardsEligibilityClient` from `contracts.py` (`get_oracle_config()`, `get_indexer_eligibility()`, `get_eligibility_batch()`, plus the pure `derive_eligibility()` helper) and render it with `format_eligibility()` from `common.py`. Every call fails soft, so the tools keep working without an RPC.
+
 ### Token Amounts
 All token amounts from the subgraph are in wei (18 decimals). Use `format_tokens()` from `common.py` for display.
 

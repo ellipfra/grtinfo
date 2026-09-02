@@ -32,11 +32,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Import shared modules
 from common import (
     Colors, terminal_link,
-    format_tokens, format_tokens_short, format_duration, print_section
+    format_tokens, format_tokens_short, format_duration, print_section,
+    format_eligibility
 )
 from config import get_network_subgraph_url, get_ens_subgraph_url, get_analytics_subgraph_url
 from ens_client import ENSClient
-from contracts import REWARDS_MANAGER, STAKING, SUBGRAPH_SERVICE, GRT_DECIMALS
+from contracts import (REWARDS_MANAGER, STAKING, SUBGRAPH_SERVICE, GRT_DECIMALS,
+                       RewardsEligibilityClient)
 from logger import setup_logging, get_logger
 
 log = get_logger(__name__)
@@ -1272,6 +1274,19 @@ Examples:
         if actual_withdrawn > 0:
             print(f"  {Colors.DIM}Withdrawn: {format_tokens(str(actual_withdrawn))} (lifetime){Colors.RESET}")
         
+        # Rewards eligibility (GIP-0079): an indexer the oracle has not renewed
+        # mints no indexing rewards, so its delegators silently earn 0. Nothing
+        # in the subgraph signals this, hence the on-chain batch lookup.
+        eligibility_map = {}
+        eligibility_config = None
+        try:
+            elig_client = RewardsEligibilityClient(get_rpc_url())
+            eligibility_config = elig_client.get_oracle_config()
+            eligibility_map = elig_client.get_eligibility_batch(
+                [d['indexer']['id'] for d in active_delegations_list])
+        except Exception as e:
+            log.debug(f"Eligibility lookup failed: {e}")
+
         # Active Delegations section
         print_section(f"Active Delegations ({len(active_delegations_list)})")
         print(f"  {Colors.DIM}{'Indexer':<28} {'Staked':>20}    {'Value':>20}  {'Profit':>20}{Colors.RESET}")
@@ -1326,13 +1341,31 @@ Examples:
             print(f" {Colors.DIM}→{Colors.RESET}", end='')
             print(f" {Colors.BRIGHT_GREEN}{value_str:>20}{Colors.RESET}", end='')
             
+            # Eligibility tag (empty when the RPC is unavailable)
+            elig = eligibility_map.get(indexer_id.lower())
+            elig_tag = format_eligibility(elig, 'short') if elig else ""
+            elig_suffix = f"  {elig_tag}" if elig_tag else ""
+
             # Profit column with color
             if accrued > 0:
-                print(f"  {Colors.YELLOW}{profit_str:>20}{Colors.RESET}")
+                print(f"  {Colors.YELLOW}{profit_str:>20}{Colors.RESET}{elig_suffix}")
             elif accrued < 0 and abs(profit_pct) >= 1.0:
-                print(f"  {Colors.RED}{profit_str:>20}{Colors.RESET}")
+                print(f"  {Colors.RED}{profit_str:>20}{Colors.RESET}{elig_suffix}")
             else:
-                print(f"  {Colors.DIM}{profit_str:>20}{Colors.RESET}")
+                print(f"  {Colors.DIM}{profit_str:>20}{Colors.RESET}{elig_suffix}")
+
+        # Summary line: spell out the consequence once, under the table.
+        ineligible = [a for a, st in eligibility_map.items()
+                      if not st.get('eligible')
+                      and a in {d['indexer']['id'].lower() for d in active_delegations_list}]
+        if ineligible:
+            if eligibility_config and eligibility_config.get('revert_on_ineligible'):
+                consequence = "their POIs revert, so no indexing rewards are minted at all"
+            else:
+                consequence = "their indexing rewards are reclaimed by the protocol"
+            print(f"  {Colors.BRIGHT_RED}⚠ {len(ineligible)} of {len(active_delegations_list)} "
+                  f"indexers are not eligible for indexing rewards{Colors.RESET} "
+                  f"{Colors.DIM}({consequence}){Colors.RESET}")
     
     # Save cache after all operations
     _save_accrued_rewards_cache()
